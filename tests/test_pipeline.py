@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from video_benchmark.acceleration import AccelerationInfo, detect_acceleration
 from video_benchmark.config import BenchmarkSettings, ScoringWeights
+from video_benchmark.pipeline.orchestrator import _resolve_worker_count
 
 
 class TestAcceleration:
@@ -46,3 +47,20 @@ class TestConfig:
     def test_weights_from_dict(self) -> None:
         w = ScoringWeights(brightness=0.5, sharpness=0.5)
         assert w.brightness == 0.5
+
+
+class TestWorkerResolution:
+    def test_respects_explicit_worker_count(self) -> None:
+        accel = AccelerationInfo(videotoolbox=True, mps_available=True)
+        workers = _resolve_worker_count(3, total_videos=10, accel=accel)
+        assert workers == 3
+
+    def test_auto_workers_on_gpu_path(self) -> None:
+        accel = AccelerationInfo(videotoolbox=True, mps_available=True)
+        workers = _resolve_worker_count(0, total_videos=6, accel=accel)
+        assert 2 <= workers <= 6
+
+    def test_single_video_always_single_worker(self) -> None:
+        accel = AccelerationInfo(videotoolbox=True, mps_available=True)
+        workers = _resolve_worker_count(0, total_videos=1, accel=accel)
+        assert workers == 1
