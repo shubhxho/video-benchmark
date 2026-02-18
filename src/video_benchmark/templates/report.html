@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Benchmark Report</title>
+<style>
+  :root { --green: #22c55e; --blue: #3b82f6; --yellow: #eab308; --red: #ef4444; --dark-red: #dc2626; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; line-height: 1.6; padding: 2rem; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.3rem; margin: 1.5rem 0 0.75rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .stat-card { background: #fff; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }
+  .stat-card .value { font-size: 2rem; font-weight: 700; }
+  .stat-card .label { font-size: 0.85rem; color: #64748b; }
+  .grade-A { color: var(--green); } .grade-B { color: var(--blue); } .grade-C { color: var(--yellow); }
+  .grade-D { color: var(--red); } .grade-F { color: var(--dark-red); }
+  .grade-bar { display: flex; align-items: center; margin: 0.25rem 0; }
+  .grade-bar .letter { width: 24px; font-weight: 700; }
+  .grade-bar .bar { height: 20px; border-radius: 3px; min-width: 2px; }
+  .grade-bar .count { margin-left: 0.5rem; font-size: 0.85rem; color: #64748b; }
+  table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th { background: #f1f5f9; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.85rem; font-weight: 600; }
+  td { padding: 0.5rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.9rem; }
+  tr:hover { background: #f8fafc; }
+  .chart-container { background: #fff; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin: 1rem 0; text-align: center; }
+  .chart-container img { max-width: 100%; height: auto; }
+  details { background: #fff; border-radius: 8px; margin: 0.5rem 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  details summary { padding: 0.75rem 1rem; cursor: pointer; font-weight: 600; }
+  details .content { padding: 0 1rem 1rem; }
+  .thumb-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .thumb-grid img { max-width: 300px; border-radius: 4px; border: 1px solid #e2e8f0; }
+  .thumb-grid .label { font-size: 0.8rem; color: #64748b; text-align: center; }
+  .issue-list { list-style: none; }
+  .issue-list li { padding: 0.25rem 0; }
+  .issue-list .count { font-weight: 700; margin-right: 0.5rem; }
+  .failed { background: #fef2f2; border-left: 4px solid var(--red); padding: 0.5rem 1rem; margin: 0.25rem 0; border-radius: 0 4px 4px 0; }
+  footer { margin-top: 2rem; text-align: center; color: #94a3b8; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Video Benchmark Report</h1>
+  <p style="color:#64748b">Generated in {{ "%.1f"|format(elapsed) }}s &mdash; {{ total_videos }} videos analyzed</p>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="stat-card"><div class="value">{{ scored_videos }}</div><div class="label">Scored</div></div>
+    <div class="stat-card"><div class="value">{{ failed_count }}</div><div class="label">Failed</div></div>
+    <div class="stat-card"><div class="value">{{ operator_count }}</div><div class="label">Operators</div></div>
+    <div class="stat-card"><div class="value">{{ "%.1f"|format(elapsed) }}s</div><div class="label">Time</div></div>
+  </div>
+
+  <h2>Grade Distribution</h2>
+  {% for grade in ["A","B","C","D","F"] %}
+  {% set count = grade_dist.get(grade, 0) %}
+  {% set pct = (count / total_videos * 100) if total_videos > 0 else 0 %}
+  {% set colors = {"A":"#22c55e","B":"#3b82f6","C":"#eab308","D":"#ef4444","F":"#dc2626"} %}
+  <div class="grade-bar">
+    <span class="letter grade-{{ grade }}">{{ grade }}</span>
+    <div class="bar" style="width:{{ pct * 3 }}px;background:{{ colors[grade] }}"></div>
+    <span class="count">{{ count }} ({{ "%.0f"|format(pct) }}%)</span>
+  </div>
+  {% endfor %}
+
+  {% if grade_chart_b64 %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ grade_chart_b64 }}" alt="Grade Distribution Chart">
+  </div>
+  {% endif %}
+
+  <h2>Operator Rankings</h2>
+  <table>
+    <thead><tr><th>Rank</th><th>Operator</th><th>Score</th><th>Grade</th><th>Videos</th><th>Usable</th><th>Issue</th></tr></thead>
+    <tbody>
+    {% for r in rankings %}
+    <tr>
+      <td>{{ r.rank }}</td>
+      <td>{{ r.operator_id }}</td>
+      <td>{{ r.final_score }}</td>
+      <td class="grade-{{ r.grade }}"><strong>{{ r.grade }}</strong></td>
+      <td>{{ r.video_count }}</td>
+      <td>{{ r.usable_pct }}</td>
+      <td>{{ r.worst_issue }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Video Details</h2>
+  {% for s in scores %}
+  <details>
+    <summary class="grade-{{ s.grade }}">{{ s.filename }} &mdash; {{ s.composite_score }} ({{ s.grade }}) {% if s.worst_issue != "none" %}&mdash; {{ s.worst_issue }}{% endif %}</summary>
+    <div class="content">
+      <table>
+        <thead><tr><th>Metric</th><th>Score</th></tr></thead>
+        <tbody>
+        {% for k, v in s.metric_scores.items() %}
+        <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if s.filename in frame_cache %}
+      <div class="thumb-grid" style="margin-top:0.5rem">
+        {% if frame_cache[s.filename].get("best") %}
+        <div><img src="data:image/jpeg;base64,{{ frame_cache[s.filename]['best'] }}"><div class="label">Best Frame</div></div>
+        {% endif %}
+        {% if frame_cache[s.filename].get("worst") %}
+        <div><img src="data:image/jpeg;base64,{{ frame_cache[s.filename]['worst'] }}"><div class="label">Worst Frame</div></div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+
+  {% if common_issues %}
+  <h2>Common Issues</h2>
+  <ul class="issue-list">
+    {% for issue, count in common_issues %}
+    <li><span class="count">{{ count }}</span> {{ issue }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if failed_videos %}
+  <h2>Failed Videos ({{ failed_count }})</h2>
+  {% for f in failed_videos %}
+  <div class="failed"><strong>{{ f.filename }}</strong>: {{ f.error }}</div>
+  {% endfor %}
+  {% endif %}
+
+  <footer>Generated by video-benchmark v0.1.0</footer>
+</div>
+</body>
+</html>
