@@ -11,6 +11,14 @@ from rich.console import Console
 
 from video_benchmark.acceleration import detect_acceleration, require_ffmpeg
 from video_benchmark.config import BenchmarkSettings, ScoringWeights, ScoringWeightsV2
+from video_benchmark.compression import (
+    CompressionPlan,
+    compress_video,
+    find_videos,
+    human_size,
+    probe_video,
+    select_plan,
+)
 from video_benchmark.output.console import print_summary
 from video_benchmark.output.csv_export import export_rankings_csv, export_video_scores_csv
 from video_benchmark.output.html_report import export_html_report
@@ -203,6 +211,80 @@ def score_single(
         elapsed,
         run_info=result.run_info,
     )
+
+
+@app.command()
+def compress(
+    source: Annotated[Path, typer.Argument(help="Path to a video file or directory containing .mp4")],
+    output: Annotated[Path, typer.Option(help="Output directory for compressed files")] = Path(
+        "compressed"
+    ),
+    codec: Annotated[
+        str,
+        typer.Option(
+            help="Codec to use: h264 (fast), h265 (balanced), av1 (smaller but slower)",
+            case_sensitive=False,
+        ),
+    ] = "h265",
+    crf: Annotated[int | None, typer.Option(help="Override CRF; lower=better quality")] = None,
+    scale: Annotated[str | None, typer.Option(help="Optional scale filter, e.g. 1280:-2")] = None,
+    audio_bitrate: Annotated[str, typer.Option(help="Audio bitrate (e.g. 96k, 128k)")] = "96k",
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Overwrite existing outputs")] = False,
+    llm: Annotated[
+        bool,
+        typer.Option("--llm", help="Ask Gemini to refine compression settings"),
+    ] = False,
+    api_key: Annotated[
+        str | None,
+        typer.Option("--api-key", envvar="GEMINI_API_KEY", help="Gemini API key"),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", help="Verbose ffmpeg output")] = False,
+) -> None:
+    """Compress videos with sensible defaults and optional LLM tuning."""
+    require_ffmpeg()
+
+    videos = list(find_videos(source))
+    if not videos:
+        console.print("[red]No .mp4 files found.[/red]")
+        raise typer.Exit(1)
+
+    accel = detect_acceleration()
+    if accel.videotoolbox:
+        console.print("[green]Using VideoToolbox hardware acceleration when available.[/green]")
+
+    results: list[str] = []
+    for vid in videos:
+        probe = probe_video(vid)
+        plan: CompressionPlan = select_plan(
+            probe,
+            codec=codec,
+            crf=crf,
+            scale=scale,
+            use_llm=llm,
+            api_key=api_key,
+        )
+        plan.audio_bitrate = audio_bitrate
+
+        try:
+            res = compress_video(
+                vid,
+                output_dir=output,
+                plan=plan,
+                accel=accel,
+                overwrite=overwrite,
+                verbose=verbose,
+            )
+            results.append(
+                f"{vid.name}: {human_size(res.source_size)} -> {human_size(res.output_size)} "
+                f"({res.ratio:.2f}x)"
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]Failed: {vid.name} ({exc})[/red]")
+
+    if results:
+        console.print("\n[bold]Compression results[/bold]")
+        for line in results:
+            console.print(line)
 
 
 def _resolve_videos(settings: BenchmarkSettings) -> list[VideoFile]:

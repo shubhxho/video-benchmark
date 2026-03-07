@@ -1,0 +1,3 @@
+operator_id,filename,video_path,composite_score,grade,worst_issue,metric_image_quality,metric_stability,metric_hand_detection_rate,metric_hand_landmark_quality,metric_tracking_continuity,metric_scene_validity,metric_anomaly_score,metric_blur_score,metric_temporal_consistency,metric_audio_quality
+unknown,factorytypeshi.mp4,/Users/shubh/Documents/microagi/benchmark/videos/factorytypeshi.mp4,53.9,C,camera_shake,46.5,0.0,90.0,31.5,85.0,70.2,57.9,100.0,59.1,0.0
+unknown,SOTAHANDANNOTATION.mp4,/Users/shubh/Documents/microagi/benchmark/videos/SOTAHANDANNOTATION.mp4,35.0,D,poor_image_quality,0.0,50.0,0.0,0.0,0.0,75.0,100.0,100.0,100.0,0.0

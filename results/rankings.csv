@@ -1,0 +1,2 @@
+rank,operator_id,final_score,grade,mean_score,consistency_bonus,video_count,usable_pct,worst_issue
+1,unknown,45.8,C,44.5,1.3,2,0%,camera_shake
