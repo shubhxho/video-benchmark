@@ -37,6 +37,18 @@ async function loadMetadata(file: File): Promise<{
   width: number;
   height: number;
 }> {
+  try {
+    return await loadMetadataWithVideoElement(file);
+  } catch {
+    return loadMetadataWithFFprobe(file);
+  }
+}
+
+async function loadMetadataWithVideoElement(file: File): Promise<{
+  duration: number;
+  width: number;
+  height: number;
+}> {
   const url = URL.createObjectURL(file);
 
   try {
@@ -44,13 +56,14 @@ async function loadMetadata(file: File): Promise<{
     video.muted = true;
     video.playsInline = true;
     video.preload = "metadata";
-    video.src = url;
 
     await new Promise<void>((resolve, reject) => {
       video.addEventListener("loadedmetadata", () => resolve(), { once: true });
       video.addEventListener("error", () => reject(new Error("Failed to load video")), {
         once: true,
       });
+      video.src = url;
+      video.load();
     });
 
     const { duration, videoWidth: width, videoHeight: height } = video;
@@ -61,6 +74,63 @@ async function loadMetadata(file: File): Promise<{
     return { duration, width, height };
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+async function loadMetadataWithFFprobe(file: File): Promise<{
+  duration: number;
+  width: number;
+  height: number;
+}> {
+  const ffmpeg = await getFFmpeg();
+  const jobId = extractionJobId++;
+  const outputName = `probe-${jobId}.json`;
+  let mountedInput: MountedInput | null = null;
+
+  try {
+    mountedInput = await mountInputFile(ffmpeg, file, jobId);
+    const exitCode = await ffmpeg.ffprobe([
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height:format=duration",
+      "-of",
+      "json",
+      mountedInput.inputPath,
+      "-o",
+      outputName,
+    ]);
+
+    if (exitCode !== 0) {
+      throw new Error(`FFprobe exited with code ${exitCode}`);
+    }
+
+    const probeOutput = await ffmpeg.readFile(outputName, "utf8");
+    if (typeof probeOutput !== "string") {
+      throw new Error("FFprobe did not return metadata");
+    }
+
+    const parsed = JSON.parse(probeOutput) as {
+      format?: { duration?: string };
+      streams?: Array<{ width?: number; height?: number }>;
+    };
+    const stream = parsed.streams?.[0];
+    const duration = Number(parsed.format?.duration ?? 0);
+    const width = Number(stream?.width ?? 0);
+    const height = Number(stream?.height ?? 0);
+
+    if (!duration || !width || !height) {
+      throw new Error("Invalid video: missing duration or dimensions");
+    }
+
+    return { duration, width, height };
+  } finally {
+    await Promise.allSettled([
+      ffmpeg.deleteFile(outputName),
+      mountedInput?.cleanup(),
+    ]);
   }
 }
 
@@ -266,13 +336,14 @@ async function extractFramesWithVideoElement(
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
-    video.src = url;
 
     await new Promise<void>((resolve, reject) => {
       video.addEventListener("loadedmetadata", () => resolve(), { once: true });
       video.addEventListener("error", () => reject(new Error("Failed to load video")), {
         once: true,
       });
+      video.src = url;
+      video.load();
     });
 
     const duration = video.duration;

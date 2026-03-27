@@ -137,10 +137,6 @@ export default function App() {
       ]);
       done("pipe", "gpu + wasm");
 
-      add("map", "body map");
-      try { mapper = await BodyMapper.create(); done("map", mapper.modelLabel); }
-      catch { done("map", "skipped"); }
-
       add("audio", "audio");
       audioP = analyzeAudio(f);
 
@@ -150,6 +146,10 @@ export default function App() {
       );
       if (!frames.length) { setError("no frames"); return; }
       done("frames", `${frames.length}`);
+
+      add("map", "body map");
+      try { mapper = await BodyMapper.create(); done("map", mapper.modelLabel); }
+      catch { done("map", "skipped"); }
 
       add("analyze", "analyzing");
       const fm: FrameMetrics[] = [];

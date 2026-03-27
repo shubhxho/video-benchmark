@@ -1,5 +1,6 @@
 import { FilesetResolver, HolisticLandmarker } from "@mediapipe/tasks-vision";
 import type { FrameBodyMap, FrameData, LandmarkPoint } from "../types.js";
+import { createLandmarkPostProcessor } from "../wasm/landmark-postprocess.js";
 
 const WASM_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
 const MODEL_ASSET_PATH =
@@ -10,20 +11,9 @@ const MODEL_CANDIDATES = [
   { label: "holistic cpu", delegate: "CPU" as const },
 ] as const;
 
-const LIMB_POSE_INDICES = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28] as const;
-
 function clampVisibility(value: number | undefined): number {
   if (typeof value !== "number" || Number.isNaN(value)) return 0;
   return Math.max(0, Math.min(1, value));
-}
-
-function averageVisibility(points: LandmarkPoint[]): number {
-  if (points.length === 0) return 0;
-  let sum = 0;
-  for (const point of points) {
-    sum += clampVisibility(point.visibility);
-  }
-  return sum / points.length;
 }
 
 function toPoints(
@@ -40,12 +30,18 @@ function toPoints(
 export class BodyMapper {
   readonly modelLabel: string;
   private readonly landmarker: HolisticLandmarker;
+  private readonly postProcessor: Awaited<ReturnType<typeof createLandmarkPostProcessor>>;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
 
-  private constructor(landmarker: HolisticLandmarker, modelLabel: string) {
+  private constructor(
+    landmarker: HolisticLandmarker,
+    postProcessor: Awaited<ReturnType<typeof createLandmarkPostProcessor>>,
+    modelLabel: string,
+  ) {
     this.modelLabel = modelLabel;
     this.landmarker = landmarker;
+    this.postProcessor = postProcessor;
     this.canvas = document.createElement("canvas");
     this.ctx = this.canvas.getContext("2d")!;
   }
@@ -56,6 +52,7 @@ export class BodyMapper {
 
     for (const candidate of MODEL_CANDIDATES) {
       try {
+        const postProcessor = await createLandmarkPostProcessor();
         const landmarker = await HolisticLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: MODEL_ASSET_PATH,
@@ -69,7 +66,7 @@ export class BodyMapper {
           outputFaceBlendshapes: false,
           outputPoseSegmentationMasks: false,
         });
-        return new BodyMapper(landmarker, candidate.label);
+        return new BodyMapper(landmarker, postProcessor, `${candidate.label} + wasm`);
       } catch (error) {
         lastError = error;
       }
@@ -99,37 +96,21 @@ export class BodyMapper {
     this.ctx.putImageData(imageData, 0, 0);
 
     const results = this.landmarker.detect(this.canvas);
-    const poseLandmarks = toPoints(results.poseLandmarks[0]);
-    const leftHandLandmarks = toPoints(results.leftHandLandmarks[0]);
-    const rightHandLandmarks = toPoints(results.rightHandLandmarks[0]);
-
-    const bodyDetected = poseLandmarks.length > 0;
-    const handDetected = leftHandLandmarks.length > 0 || rightHandLandmarks.length > 0;
-    const handLandmarks = [...leftHandLandmarks, ...rightHandLandmarks];
-    const bodyVisibility = averageVisibility(poseLandmarks) * 100;
-    const limbVisibility = averageVisibility(
-      LIMB_POSE_INDICES
-        .map((index) => poseLandmarks[index])
-        .filter((landmark): landmark is LandmarkPoint => Boolean(landmark)),
-    ) * 100;
-
-    const map = bodyDetected || handDetected
-      ? {
-          poseLandmarks,
-          leftHandLandmarks,
-          rightHandLandmarks,
-        }
-      : null;
+    const processed = this.postProcessor.process({
+      poseLandmarks: toPoints(results.poseLandmarks[0]),
+      leftHandLandmarks: toPoints(results.leftHandLandmarks[0]),
+      rightHandLandmarks: toPoints(results.rightHandLandmarks[0]),
+    });
 
     return {
-      handDetected,
-      handConfidence: averageVisibility(handLandmarks),
-      handLandmarkCount: handLandmarks.length,
-      bodyDetected,
-      bodyLandmarkCount: poseLandmarks.length,
-      bodyVisibility,
-      limbVisibility,
-      map,
+      handDetected: processed.handDetected,
+      handConfidence: processed.handConfidence,
+      handLandmarkCount: processed.handLandmarkCount,
+      bodyDetected: processed.bodyDetected,
+      bodyLandmarkCount: processed.bodyLandmarkCount,
+      bodyVisibility: processed.bodyVisibility,
+      limbVisibility: processed.limbVisibility,
+      map: processed.bodyDetected || processed.handDetected ? processed.map : null,
     };
   }
 

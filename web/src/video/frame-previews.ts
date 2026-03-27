@@ -91,8 +91,9 @@ export class FramePreviewRenderer {
       const from = landmarks[start];
       const to = landmarks[end];
       if (!from || !to) continue;
+      if (from.visibility < 0.06 && to.visibility < 0.06) continue;
 
-      const alpha = Math.max(0.2, Math.min(1, (from.visibility + to.visibility) / 2));
+      const alpha = Math.max(0.18, Math.min(1, (from.visibility + to.visibility) / 2));
       ctx.beginPath();
       ctx.moveTo(from.x * width, from.y * height);
       ctx.lineTo(to.x * width, to.y * height);
@@ -123,6 +124,7 @@ export class FramePreviewRenderer {
     ctx.save();
 
     for (const landmark of landmarks) {
+      if (landmark.visibility < 0.06) continue;
       const alpha = Math.max(0.25, landmark.visibility);
       const x = landmark.x * width;
       const y = landmark.y * height;

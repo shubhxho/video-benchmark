@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bunx vite",
-    "build:frame-wasm": "./node_modules/.bin/wat2wasm src/wasm/frame-analysis.wat -o src/wasm/frame-analysis.wasm",
-    "build": "bunx tsc && bunx vite build",
+    "build:wasm": "./node_modules/.bin/wat2wasm src/wasm/frame-analysis.wat -o src/wasm/frame-analysis.wasm && ./node_modules/.bin/wat2wasm src/wasm/landmark-postprocess.wat -o src/wasm/landmark-postprocess.wasm",
+    "build": "bun run build:wasm && bunx tsc && bunx vite build",
     "preview": "bunx vite preview",
     "deploy": "bunx wrangler pages deploy dist"
   },
