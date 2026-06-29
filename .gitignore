@@ -24,3 +24,6 @@ charm-tui/vbtui
 
 # packaged Hugging Face bundle (regenerated via distill.export_hf)
 hf_export/
+
+# generated report graphs
+reports/

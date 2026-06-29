@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -12,6 +13,14 @@ from video_benchmark.distill.data import FeatureCache
 from video_benchmark.distill.model import CompactQualityNet
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TrainHistory:
+    best_val_loss: float
+    epochs_run: int
+    train_losses: list[float] = field(default_factory=list)
+    val_losses: list[float] = field(default_factory=list)
 
 
 def train_heads(
@@ -24,8 +33,8 @@ def train_heads(
     lr: float = 1e-3,
     weight_decay: float = 1e-4,
     patience: int = 40,
-) -> dict[str, float]:
-    """Train trunk+heads on cached features. Returns best val loss history summary."""
+) -> TrainHistory:
+    """Train trunk+heads on cached features; record the loss curve."""
     feats = torch.from_numpy(cache.features).float().to(device)
     targs = torch.from_numpy(cache.targets).float().to(device) / 100.0  # train in [0,1]
 
@@ -40,6 +49,8 @@ def train_heads(
     best_val = float("inf")
     best_state: dict[str, torch.Tensor] = {}
     bad = 0
+    train_losses: list[float] = []
+    val_losses: list[float] = []
     model.trunk.train()
 
     for epoch in range(epochs):
@@ -55,6 +66,8 @@ def train_heads(
         with torch.no_grad():
             vpred = model.forward_from_features(xv) / 100.0
             vloss = float(loss_fn(vpred, yv))
+        train_losses.append(float(loss.detach()))
+        val_losses.append(vloss)
         if vloss < best_val - 1e-5:
             best_val = vloss
             best_state = {
@@ -73,4 +86,9 @@ def train_heads(
 
     if best_state:
         model.load_state_dict(best_state, strict=False)
-    return {"best_val_loss": best_val, "epochs_run": epoch + 1}
+    return TrainHistory(
+        best_val_loss=best_val,
+        epochs_run=epoch + 1,
+        train_losses=train_losses,
+        val_losses=val_losses,
+    )

@@ -32,6 +32,7 @@ dependencies = [
     "pillow>=12.2",
     "transformers>=4.45.0",
     "textual>=8",
+    "matplotlib>=3.9",
 ]
 
 [project.scripts]

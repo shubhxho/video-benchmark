@@ -112,6 +112,20 @@ def evaluate_fidelity(
     )
 
 
+def val_predictions(
+    model: CompactQualityNet,
+    cache: FeatureCache,
+    val_idx: np.ndarray,
+    device: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (teacher_targets, student_preds) on the val set, 0..100, for plots."""
+    feats = torch.from_numpy(cache.features[val_idx]).float().to(device)
+    model.trunk.eval()
+    with torch.no_grad():
+        y_pred = model.forward_from_features(feats).clamp(0.0, 100.0).cpu().numpy()
+    return cache.targets[val_idx], y_pred
+
+
 def benchmark_speed(
     model: CompactQualityNet,
     teacher: TeacherLabeler,

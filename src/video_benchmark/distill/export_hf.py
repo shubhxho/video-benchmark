@@ -23,9 +23,21 @@ from video_benchmark.distill.teacher import DEEP
 _REPO_URL = "https://github.com/shubhxho/video-benchmark"
 
 
-def _model_card(repo: str, cfg: dict[str, Any], metrics: dict[str, Any] | None) -> str:
+def _model_card(
+    repo: str, cfg: dict[str, Any], metrics: dict[str, Any] | None, images: list[str]
+) -> str:
     deep = ", ".join(DEEP)
     targets = cast("list[str]", cfg["targets"])
+    gallery = ""
+    if images:
+        titles = {
+            "training_loss.png": "Training loss",
+            "fidelity.png": "Fidelity (PLCC vs teacher)",
+            "scatter_iqa.png": "Learned IQA: student vs teacher",
+            "throughput.png": "Throughput",
+        }
+        rows = "\n".join(f"![{titles.get(n, n)}]({n})" for n in images)
+        gallery = f"\n## Graphs\n\n{rows}\n"
     speed = ""
     if metrics:
         s = metrics.get("speed", {})
@@ -66,7 +78,7 @@ exact OpenCV stats included for a unified read-out and better computed directly.
 ## Performance (distillation fidelity vs. the teacher)
 
 {speed}- Learned IQA reproduced at high correlation; see the repo for the full report.
-
+{gallery}
 ## Usage
 
 ```python
@@ -100,8 +112,11 @@ def build_bundle(
     checkpoint: Path,
     out_dir: Path,
     metrics_json: Path | None = None,
+    plots_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Write safetensors weights, config.json, README.md into ``out_dir``."""
+    """Write safetensors weights, config.json, README.md, graphs into ``out_dir``."""
+    import shutil
+
     from safetensors.torch import save_file
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +161,13 @@ def build_bundle(
         metrics = json.loads(metrics_json.read_text())
         (out_dir / "results.json").write_text(json.dumps(metrics, indent=2))
 
-    (out_dir / "README.md").write_text(_model_card("REPO_PLACEHOLDER", cfg, metrics))
+    images: list[str] = []
+    if plots_dir and plots_dir.exists():
+        for png in sorted(plots_dir.glob("*.png")):
+            shutil.copy(png, out_dir / png.name)
+            images.append(png.name)
+
+    (out_dir / "README.md").write_text(_model_card("REPO_PLACEHOLDER", cfg, metrics, images))
     return cfg
 
 
@@ -169,12 +190,13 @@ def main() -> None:
     ap.add_argument("--ckpt", type=Path, default=Path("models/compact_quality.pt"))
     ap.add_argument("--out", type=Path, default=Path("hf_export"))
     ap.add_argument("--metrics", type=Path, default=None, help="results.json from --emit-json")
+    ap.add_argument("--plots-dir", type=Path, default=Path("reports"), help="dir of graph PNGs")
     ap.add_argument("--repo", default="shubhxho/video-benchmark-compact-quality")
     ap.add_argument("--push", action="store_true", help="upload to the Hub (needs a token)")
     ap.add_argument("--private", action="store_true")
     args = ap.parse_args()
 
-    cfg = build_bundle(args.ckpt, args.out, args.metrics)
+    cfg = build_bundle(args.ckpt, args.out, args.metrics, args.plots_dir)
     print(f"bundle ready in {args.out}/  ({cfg['params_millions']:.1f}M params, "
           f"{cfg['fp16_mb']:.0f} MB fp16)")
     for f in sorted(args.out.iterdir()):

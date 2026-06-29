@@ -28,6 +28,26 @@ FAINT = "#55576a"
 
 FILLED = "█"
 EMPTY = "░"
+_SPARK = "▁▂▃▄▅▆▇█"
+
+
+def sparkline(values: list[float], width: int = 48, color: str = GREEN) -> Text:
+    """A unicode sparkline of a series, downsampled to ``width`` columns."""
+    if not values:
+        return Text("")
+    if len(values) > width:  # average-pool down to width buckets
+        step = len(values) / width
+        pooled = [
+            sum(values[int(i * step) : max(int(i * step) + 1, int((i + 1) * step))])
+            / max(1, max(int(i * step) + 1, int((i + 1) * step)) - int(i * step))
+            for i in range(width)
+        ]
+    else:
+        pooled = values
+    lo, hi = min(pooled), max(pooled)
+    rng = hi - lo or 1.0
+    chars = "".join(_SPARK[min(7, int((v - lo) / rng * 7))] for v in pooled)
+    return Text(chars, style=color)
 
 
 def _corr_color(v: float) -> str:

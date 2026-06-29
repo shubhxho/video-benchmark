@@ -30,10 +30,11 @@ from video_benchmark.distill.evaluate import (
     benchmark_speed,
     evaluate_fidelity,
     model_size_mb,
+    val_predictions,
 )
 from video_benchmark.distill.model import DEFAULT_BACKBONE, CompactQualityNet
 from video_benchmark.distill.teacher import DEEP, TARGETS, TeacherLabeler
-from video_benchmark.distill.train import train_heads
+from video_benchmark.distill.train import TrainHistory, train_heads
 
 console = Console()
 # Progress/banner go here; in --emit-json mode it is redirected to stderr so
@@ -110,7 +111,7 @@ def _results_dict(
     fid: Fidelity,
     size: dict[str, float],
     bench: BenchResult,
-    hist: dict[str, float],
+    hist: TrainHistory,
     out_path: Path,
     on_disk: float,
 ) -> dict[str, object]:
@@ -160,7 +161,7 @@ def _results_dict(
             "path": str(out_path),
             "mb": on_disk,
             "under_30mb": on_disk < 30,
-            "best_val_loss": hist["best_val_loss"],
+            "best_val_loss": hist.best_val_loss,
         },
     }
 
@@ -174,6 +175,7 @@ def main() -> None:
     ap.add_argument("--fps", type=float, default=2.0, help="frames/sec sampled per clip")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--out", type=Path, default=Path("models/compact_quality.pt"))
+    ap.add_argument("--plots-dir", type=Path, default=Path("reports"), help="dir for graph PNGs")
     ap.add_argument(
         "--emit-json",
         action="store_true",
@@ -226,6 +228,13 @@ def main() -> None:
         fid = evaluate_fidelity(model, cache, val_idx, device)
         size = model_size_mb(model)
         bench = benchmark_speed(model, teacher, str(videos[0]), device)
+        y_true, y_pred = val_predictions(model, cache, val_idx, device)
+
+    _step(f"writing graphs → {args.plots_dir}/")
+    with _quiet():
+        from video_benchmark.distill import plots
+
+        plot_paths = plots.generate_all(args.plots_dir, hist, fid, bench, y_true, y_pred)
 
     # --- export (fp16) ---
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -245,16 +254,17 @@ def main() -> None:
         sys.stdout.write(json.dumps(results) + "\n")
         sys.stdout.flush()
     else:
-        _render(fid, size, bench, hist, args.out, on_disk)
+        _render(fid, size, bench, hist, args.out, on_disk, plot_paths)
 
 
 def _render(
     fid: Fidelity,
     size: dict[str, float],
     bench: BenchResult,
-    hist: dict[str, float],
+    hist: TrainHistory,
     out_path: Path,
     on_disk: float,
+    plot_paths: list[Path],
 ) -> None:
     # --- headline cards -----------------------------------------------------
     console.print()
@@ -312,6 +322,19 @@ def _render(
         )
     console.print(ui.panelize("per-signal  (deep = distilled · cv = exact, kept in OpenCV)", tbl))
 
+    # --- training curve (terminal graph) ------------------------------------
+    console.print()
+    console.print(ui.rule("TRAINING · distillation loss curve"))
+    train_t = Text()
+    train_t.append("train  ", style=ui.MUTED)
+    train_t.append_text(ui.sparkline(hist.train_losses, color=ui.VIOLET))
+    train_t.append(f"  {hist.train_losses[-1]:.4f}\n", style=ui.VIOLET)
+    train_t.append("val    ", style=ui.MUTED)
+    train_t.append_text(ui.sparkline(hist.val_losses, color=ui.GREEN))
+    train_t.append(f"  {hist.best_val_loss:.4f}", style=ui.GREEN)
+    train_t.append(f"      {hist.epochs_run} epochs", style=ui.FAINT)
+    console.print(ui.panelize("SmoothL1 loss  ·  train vs val", train_t, accent=ui.VIOLET))
+
     # --- speed --------------------------------------------------------------
     console.print()
     console.print(ui.rule("SPEED · the time-complexity win"))
@@ -348,7 +371,11 @@ def _render(
     foot.append("\n")
     foot.append("under-30MB target  ", style=ui.MUTED)
     foot.append("PASS" if ok else "FAIL", style=f"bold {ui.GREEN if ok else ui.RED}")
-    foot.append(f"     best val loss {hist['best_val_loss']:.4f}", style=ui.FAINT)
+    foot.append(f"     best val loss {hist.best_val_loss:.4f}", style=ui.FAINT)
+    if plot_paths:
+        foot.append(
+            f"\n📊 {len(plot_paths)} graphs → {plot_paths[0].parent}/", style=ui.MUTED
+        )
     console.print(ui.panelize("export", foot, accent=ui.PINK))
     console.print()
 
