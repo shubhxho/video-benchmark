@@ -4,18 +4,31 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
+from typing import NotRequired, TypedDict
 
 from video_benchmark.scoring.grader import assign_grade
 from video_benchmark.scoring.scorer import VideoScore
 
 
-def aggregate_operators(scores: list[VideoScore]) -> list[dict]:
+class OperatorRanking(TypedDict):
+    operator_id: str
+    final_score: float
+    grade: str
+    mean_score: float
+    consistency_bonus: float
+    video_count: int
+    usable_pct: str
+    worst_issue: str
+    rank: NotRequired[int]
+
+
+def aggregate_operators(scores: list[VideoScore]) -> list[OperatorRanking]:
     """Aggregate video scores per operator, compute mean + consistency bonus."""
     by_operator: dict[str, list[VideoScore]] = defaultdict(list)
     for s in scores:
         by_operator[s.operator_id].append(s)
 
-    rankings: list[dict] = []
+    rankings: list[OperatorRanking] = []
 
     for op_id, op_scores in by_operator.items():
         raw_scores = [s.composite_score for s in op_scores]

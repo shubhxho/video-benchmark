@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import cv2
 import mediapipe as mp
@@ -28,11 +29,16 @@ class HandDetectionMetric(Metric):
         max_num_hands: int = 2,
         min_detection_confidence: float = 0.5,
     ) -> None:
-        self.hands = mp.solutions.hands.Hands(
-            static_image_mode=True,
-            max_num_hands=max_num_hands,
-            min_detection_confidence=min_detection_confidence,
-        )
+        self.hands: Any | None = None
+        solutions = getattr(mp, "solutions", None)
+        hands_module = getattr(solutions, "hands", None) if solutions else None
+        hands_cls = getattr(hands_module, "Hands", None) if hands_module else None
+        if hands_cls is not None:
+            self.hands = hands_cls(
+                static_image_mode=True,
+                max_num_hands=max_num_hands,
+                min_detection_confidence=min_detection_confidence,
+            )
 
     def compute(self, frame: np.ndarray) -> float:
         """Return 1.0 if hands detected, 0.0 otherwise."""
@@ -41,6 +47,9 @@ class HandDetectionMetric(Metric):
 
     def detect(self, frame: np.ndarray) -> HandDetectionResult:
         """Run hand detection and return detailed results."""
+        if self.hands is None:
+            return HandDetectionResult(detected=False, confidence=0.0, landmark_count=0)
+
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb)
 
@@ -63,4 +72,5 @@ class HandDetectionMetric(Metric):
         )
 
     def close(self) -> None:
-        self.hands.close()
+        if self.hands is not None:
+            self.hands.close()

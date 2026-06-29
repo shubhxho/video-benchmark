@@ -9,8 +9,9 @@ from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
+from video_benchmark.pipeline.orchestrator import FailedVideo, RunInfoValue
+from video_benchmark.scoring.aggregator import OperatorRanking
 from video_benchmark.scoring.grader import grade_description
 from video_benchmark.scoring.scorer import VideoScore
 
@@ -40,10 +41,10 @@ def _styled_grade(grade: str) -> str:
 
 def print_summary(
     scores: list[VideoScore],
-    rankings: list[dict],
-    failed: list[tuple],
+    rankings: list[OperatorRanking],
+    failed: list[FailedVideo],
     elapsed_seconds: float,
-    run_info: dict[str, str | int | bool] | None = None,
+    run_info: dict[str, RunInfoValue] | None = None,
 ) -> None:
     """Print a rich summary of benchmark results."""
     console.print()
@@ -133,7 +134,7 @@ def _print_grade_distribution(scores: list[VideoScore]) -> None:
     console.print()
 
 
-def _print_operator_table(title: str, rankings: list[dict]) -> None:
+def _print_operator_table(title: str, rankings: list[OperatorRanking]) -> None:
     table = Table(title=title, show_lines=False, row_styles=["", "dim"])
     table.add_column("Rank", style="dim", width=5, justify="right")
     table.add_column("Operator", width=16)
@@ -177,7 +178,7 @@ def _print_common_issues(scores: list[VideoScore]) -> None:
     console.print()
 
 
-def _print_failed(failed: list[tuple]) -> None:
+def _print_failed(failed: list[FailedVideo]) -> None:
     table = Table(
         title=f"[bold red]Failed Videos ({len(failed)})[/bold red]",
         show_lines=False,
@@ -242,15 +243,16 @@ def _print_video_table(title: str, rows: list[VideoScore]) -> None:
     table.add_column("Score", justify="right", width=7)
     table.add_column("Grade", justify="center", width=6)
     table.add_column("Weakest Metrics", width=42)
-    table.add_column("Issue", width=22)
+    table.add_column("Next Action", width=34)
     for s in rows:
+        next_action = s.recommendations[0] if s.recommendations else "—"
         table.add_row(
             s.filename[:28],
             s.operator_id[:14],
             f"{s.composite_score:.1f}",
             _styled_grade(s.grade),
             _format_low_metrics(s),
-            s.worst_issue if s.worst_issue != "none" else "[dim]—[/dim]",
+            next_action[:34],
         )
     console.print(table)
     console.print()
@@ -265,7 +267,10 @@ def _print_video_insights(scores: list[VideoScore]) -> None:
         _print_video_table("Bottom Videos", sorted_scores[-10:])
 
 
-def _print_operator_metric_breakdown(scores: list[VideoScore], rankings: list[dict]) -> None:
+def _print_operator_metric_breakdown(
+    scores: list[VideoScore],
+    rankings: list[OperatorRanking],
+) -> None:
     if not scores or not rankings:
         return
 
@@ -307,9 +312,10 @@ def print_single_scorecard(score: VideoScore) -> None:
 
     # Score header
     grade_style = GRADE_STYLES.get(score.grade, "")
+    grade = f"[{grade_style}]{score.grade}[/{grade_style}]"
     console.print(
         Panel(
-            f"[bold]{score.composite_score:.1f}[/bold]  [{grade_style}]{score.grade}[/{grade_style}]"
+            f"[bold]{score.composite_score:.1f}[/bold]  {grade}"
             f"  —  {grade_description(score.grade)}",
             title=f"[bold]{score.filename}[/bold]",
             border_style="blue",
@@ -337,4 +343,35 @@ def print_single_scorecard(score: VideoScore) -> None:
 
     if score.worst_issue != "none":
         console.print(f"\n  Primary issue: [bold]{score.worst_issue}[/bold]")
+    if score.score_contributions:
+        contribution_table = Table(title="Score Contributions", show_lines=False)
+        contribution_table.add_column("Metric")
+        contribution_table.add_column("Weight", justify="right")
+        contribution_table.add_column("Points", justify="right")
+        top_contributions = sorted(
+            score.score_contributions.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:6]
+        for metric, contribution in top_contributions:
+            contribution_table.add_row(
+                metric,
+                f"{score.metric_weights.get(metric, 0.0) * 100:.1f}%",
+                f"{contribution:.2f}",
+            )
+        console.print(contribution_table)
+    if score.recommendations:
+        rec_table = Table(title="Recommended Fixes", show_lines=False)
+        rec_table.add_column("#", justify="right", width=3)
+        rec_table.add_column("Action")
+        for idx, recommendation in enumerate(score.recommendations, start=1):
+            rec_table.add_row(str(idx), recommendation)
+        console.print(rec_table)
+    if score.scoring_notes:
+        note_table = Table(title="Scoring Notes", show_lines=False)
+        note_table.add_column("#", justify="right", width=3)
+        note_table.add_column("Note")
+        for idx, note in enumerate(score.scoring_notes, start=1):
+            note_table.add_row(str(idx), note)
+        console.print(note_table)
     console.print()

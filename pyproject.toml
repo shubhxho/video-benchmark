@@ -3,35 +3,49 @@ name = "video-benchmark"
 version = "0.1.0"
 description = "Score and rank operator video quality from headband-mounted cameras"
 readme = "README.md"
-requires-python = ">=3.12"
+# Pinned below 3.14 because numba/llvmlite (transitively required by pyiqa→facexlib
+# and librosa) have no Python 3.14 wheels yet. Everything else is current-latest;
+# bump to >=3.14 once numba ships 3.14 support.
+requires-python = ">=3.13,<3.14"
 dependencies = [
-    "opencv-python>=4.10",
-    "mediapipe>=0.10.18",
-    "numpy",
-    "polars",
-    "typer[all]",
-    "rich",
-    "pydantic>=2.0",
-    "pydantic-settings",
-    "boto3",
+    "opencv-python>=4.13",
+    "mediapipe>=0.10.35",
+    # numpy is capped indirectly by numba (librosa/pyiqa→facexlib); pinning a
+    # modern numba forces a numba+numpy combo that actually builds on 3.13.
+    "numpy>=2.0",
+    "numba>=0.60",
+    "polars>=1.42",
+    "typer>=0.26",
+    "rich>=15",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.14",
+    "boto3>=1.43",
     "botocore",
-    "pyiqa>=0.1.14.1",
-    "open-clip-torch>=3.2.0",
-    "ultralytics>=8.4.14",
-    "librosa>=0.11.0",
+    "pyiqa>=0.1.15",
+    "open-clip-torch>=3.3",
+    "ultralytics>=8.4.82",
+    "librosa>=0.11",
     "pyloudnorm>=0.2.0",
-    "soundfile>=0.13.1",
-    "scipy>=1.17.0",
+    "soundfile>=0.14",
+    "scipy>=1.18",
     "jinja2>=3.1.6",
-    "pillow>=12.1.1",
+    "pillow>=12.2",
+    "transformers>=4.45.0",
+    "textual>=8",
 ]
 
 [project.scripts]
 benchmark = "video_benchmark.cli:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "ruff", "mypy"]
-llm = ["google-generativeai"]
+dev = ["pytest>=9", "pytest-cov", "ruff>=0.15", "mypy>=2.1"]
+llm = ["google-genai>=2.10"]
+# DOVER learned video-quality assessment is optional. It pins torch<2.0, which
+# conflicts with this project's modern torch, so it is NOT a managed group.
+# Install it standalone (it works fine against modern torch in practice):
+#   uv pip install decord
+#   uv pip install --no-deps "dover @ git+https://github.com/VQAssessment/DOVER.git"
+# then download DOVER.pth and set VB_DOVER_CONFIG to the repo's dover.yml.
 
 [build-system]
 requires = ["hatchling"]
@@ -41,7 +55,7 @@ build-backend = "hatchling.build"
 packages = ["src/video_benchmark"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
@@ -51,5 +65,33 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = [
+    "boto3",
+    "boto3.*",
+    "google",
+    "google.*",
+    "mediapipe",
+    "mediapipe.*",
+    "open_clip",
+    "open_clip.*",
+    "pyiqa",
+    "pyiqa.*",
+    "pyloudnorm",
+    "pyloudnorm.*",
+    "soundfile",
+    "soundfile.*",
+    "torchvision.models.optical_flow.*",
+    "torchvision.models.optical_flow",
+    "transformers",
+    "transformers.*",
+    "dover",
+    "dover.*",
+    "decord",
+    "decord.*",
+]
+ignore_missing_imports = true
