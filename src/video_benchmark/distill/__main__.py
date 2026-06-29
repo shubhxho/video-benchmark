@@ -9,8 +9,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import logging
+import math
 import os
+import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -33,6 +36,9 @@ from video_benchmark.distill.teacher import DEEP, TARGETS, TeacherLabeler
 from video_benchmark.distill.train import train_heads
 
 console = Console()
+# Progress/banner go here; in --emit-json mode it is redirected to stderr so
+# stdout carries only the machine-readable JSON the Go front-end consumes.
+progress_console = console
 
 _NOISY_LOGGERS = (
     "huggingface_hub",
@@ -91,7 +97,72 @@ def _find_videos(root: Path) -> list[Path]:
 
 
 def _step(msg: str) -> None:
-    console.print(Text("  ▸ ", style=ui.PINK) + Text(msg, style=ui.MUTED))
+    progress_console.print(Text("  ▸ ", style=ui.PINK) + Text(msg, style=ui.MUTED))
+
+
+def _results_dict(
+    args: argparse.Namespace,
+    device: str,
+    n_clips: int,
+    cache_len: int,
+    n_train: int,
+    n_val: int,
+    fid: Fidelity,
+    size: dict[str, float],
+    bench: BenchResult,
+    hist: dict[str, float],
+    out_path: Path,
+    on_disk: float,
+) -> dict[str, object]:
+    """Machine-readable results for the Go charm front-end (and JSON dumps)."""
+
+    def nn(x: float) -> float | None:
+        """NaN -> None so the output is valid JSON the Go parser accepts."""
+        return None if math.isnan(x) else x
+
+    return {
+        "backbone": args.backbone.split(":")[-1],
+        "device": device,
+        "clips": n_clips,
+        "fps": args.fps,
+        "epochs": args.epochs,
+        "frames": cache_len,
+        "train": n_train,
+        "val": n_val,
+        "targets": [
+            {
+                "name": name,
+                "kind": "deep" if name in DEEP else "cv",
+                "std": fid.per_target_std[name],
+                "plcc": nn(fid.per_target_plcc[name]),
+                "srcc": nn(fid.per_target_srcc[name]),
+                "mae": fid.per_target_mae[name],
+            }
+            for name in TARGETS
+        ],
+        "composite_plcc": nn(fid.composite_plcc),
+        "composite_srcc": nn(fid.composite_srcc),
+        "deep_plcc": nn(fid.deep_plcc),
+        "size": {
+            "params_millions": size["params_millions"],
+            "fp16_mb": size["fp16_mb"],
+            "int8_mb": size["int8_mb"],
+        },
+        "speed": {
+            "student_fps": bench.student_fps_batched,
+            "teacher_fps": bench.teacher_fps,
+            "student_ms": bench.student_ms_per_frame,
+            "teacher_ms": bench.teacher_ms_per_frame,
+            "speedup_throughput": bench.speedup_throughput,
+            "speedup_latency": bench.speedup_latency,
+        },
+        "export": {
+            "path": str(out_path),
+            "mb": on_disk,
+            "under_30mb": on_disk < 30,
+            "best_val_loss": hist["best_val_loss"],
+        },
+    }
 
 
 def main() -> None:
@@ -103,17 +174,28 @@ def main() -> None:
     ap.add_argument("--fps", type=float, default=2.0, help="frames/sec sampled per clip")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--out", type=Path, default=Path("models/compact_quality.pt"))
+    ap.add_argument(
+        "--emit-json",
+        action="store_true",
+        help="print results as JSON to stdout (progress to stderr) for the Go front-end",
+    )
     args = ap.parse_args()
+
+    global progress_console
+    if args.emit_json:
+        progress_console = Console(stderr=True)
 
     _silence_libraries()
     device = _device(args.device)
     videos = _find_videos(args.videos)
     if not videos:
-        console.print(Text("✗ no videos found under ", style=ui.RED) + Text(str(args.videos)))
+        progress_console.print(
+            Text("✗ no videos found under ", style=ui.RED) + Text(str(args.videos))
+        )
         raise SystemExit(1)
 
-    console.print()
-    console.print(
+    progress_console.print()
+    progress_console.print(
         ui.banner(
             "COMPACT QUALITY MODEL · distillation",
             f"{args.backbone.split(':')[-1]}   ·   {device}   ·   "
@@ -155,7 +237,15 @@ def main() -> None:
     torch.save(payload, args.out)
     on_disk = args.out.stat().st_size / 1e6
 
-    _render(fid, size, bench, hist, args.out, on_disk)
+    if args.emit_json:
+        results = _results_dict(
+            args, device, len(videos), len(cache), int(train_idx.sum()),
+            int(val_idx.sum()), fid, size, bench, hist, args.out, on_disk,
+        )
+        sys.stdout.write(json.dumps(results) + "\n")
+        sys.stdout.flush()
+    else:
+        _render(fid, size, bench, hist, args.out, on_disk)
 
 
 def _render(

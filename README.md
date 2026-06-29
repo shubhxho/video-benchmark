@@ -182,6 +182,11 @@ stability) deliberately stay as OpenCV at inference; the student replaces the
 *deep* signals where a learned model actually pays for itself. Point `--videos`
 at a larger operator-video corpus for production-grade fidelity.
 
+For a native charm.sh terminal UI over this pipeline, see
+[`charm-tui/`](./charm-tui) — a Go (Bubble Tea + Lip Gloss) front-end that runs
+the distillation (`--emit-json`), streams progress live, and renders the report
+in Go. The ML stays in Python; Go is the presentation layer.
+
 ## Outputs
 
 The CLI writes artifacts into the output directory, typically `results/`.
