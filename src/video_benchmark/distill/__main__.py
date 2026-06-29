@@ -7,7 +7,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import logging
+import os
+import warnings
+from collections.abc import Iterator
 from pathlib import Path
 
 import torch
@@ -28,6 +33,46 @@ from video_benchmark.distill.teacher import DEEP, TARGETS, TeacherLabeler
 from video_benchmark.distill.train import train_heads
 
 console = Console()
+
+_NOISY_LOGGERS = (
+    "huggingface_hub",
+    "timm",
+    "open_clip",
+    "pyiqa",
+    "transformers",
+    "PIL",
+    "urllib3",
+    "filelock",
+    "fsspec",
+    "video_benchmark",
+)
+
+
+def _silence_libraries() -> None:
+    """Mute third-party warnings/logging so only the charm UI shows."""
+    for key, val in {
+        "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+        "HF_HUB_DISABLE_TELEMETRY": "1",
+        "TRANSFORMERS_VERBOSITY": "error",
+        "TOKENIZERS_PARALLELISM": "false",
+    }.items():
+        os.environ.setdefault(key, val)
+    warnings.filterwarnings("ignore")
+    logging.disable(logging.WARNING)  # drop INFO/WARNING from every library
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
+@contextlib.contextmanager
+def _quiet() -> Iterator[None]:
+    """Swallow stray stdout/stderr prints from libraries during heavy phases.
+
+    The module-level Rich ``console`` keeps the real stdout, so our own output is
+    unaffected; only library ``print`` calls land in the void.
+    """
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        yield
 
 
 def _device(requested: str) -> str:
@@ -60,7 +105,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("models/compact_quality.pt"))
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    _silence_libraries()
     device = _device(args.device)
     videos = _find_videos(args.videos)
     if not videos:
@@ -77,25 +122,28 @@ def main() -> None:
         )
     )
 
-    model = CompactQualityNet(
-        backbone_name=args.backbone, pretrained=True, freeze_backbone=True
-    ).to(device)
-    teacher = TeacherLabeler(device=device)
+    _step("loading MobileCLIP-S0 backbone + teachers")
+    with _quiet():
+        model = CompactQualityNet(
+            backbone_name=args.backbone, pretrained=True, freeze_backbone=True
+        ).to(device)
+        teacher = TeacherLabeler(device=device)
 
     _step("sampling frames + running teachers (classical CV · pyiqa IQA · MobileCLIP scene)")
-    cache = build_feature_cache(videos, model, teacher, device, fps_sample=args.fps)
+    with _quiet():
+        cache = build_feature_cache(videos, model, teacher, device, fps_sample=args.fps)
     train_idx, val_idx = split_by_clip(cache)
     _step(
         f"frames={len(cache)}  train={int(train_idx.sum())}  val={int(val_idx.sum())}  "
         "(leakage-free per-clip split)"
     )
 
-    _step("training student heads on cached backbone features")
-    hist = train_heads(model, cache, train_idx, val_idx, device, epochs=args.epochs, lr=args.lr)
-
-    fid = evaluate_fidelity(model, cache, val_idx, device)
-    size = model_size_mb(model)
-    bench = benchmark_speed(model, teacher, str(videos[0]), device)
+    _step("training student heads + benchmarking")
+    with _quiet():
+        hist = train_heads(model, cache, train_idx, val_idx, device, epochs=args.epochs, lr=args.lr)
+        fid = evaluate_fidelity(model, cache, val_idx, device)
+        size = model_size_mb(model)
+        bench = benchmark_speed(model, teacher, str(videos[0]), device)
 
     # --- export (fp16) ---
     args.out.parent.mkdir(parents=True, exist_ok=True)
