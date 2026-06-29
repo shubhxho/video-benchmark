@@ -1,4 +1,4 @@
-"""Textual TUI application for scoring operator videos with a live dashboard."""
+"""Textual TUI: an interactive config form that flows into a live dashboard."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from rich.table import Table
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.screen import Screen
 from textual.widgets import (
     DataTable,
     Footer,
@@ -23,6 +24,7 @@ from textual.widgets import (
 from video_benchmark.benchmark.runner import BenchmarkReport, synthetic_benchmark
 from video_benchmark.pipeline.orchestrator import PipelineResult, run_pipeline
 from video_benchmark.pipeline.reporting import ProgressReporter
+from video_benchmark.tui.config_screen import ConfigScreen, RunConfig
 from video_benchmark.tui.styles import APP_CSS
 
 if TYPE_CHECKING:
@@ -45,13 +47,13 @@ def _grade_markup(grade: str) -> str:
 
 
 class TextualReporter(ProgressReporter):
-    """Bridges run_pipeline progress (worker thread) to the Textual app."""
+    """Bridges run_pipeline progress (worker thread) to the dashboard screen."""
 
-    def __init__(self, app: BenchmarkApp) -> None:
-        self._app = app
+    def __init__(self, screen: DashboardScreen) -> None:
+        self._screen = screen
 
     def start(self, total: int) -> None:
-        self._app.call_from_thread(self._app.report_start, total)
+        self._screen.app.call_from_thread(self._screen.report_start, total)
 
     def video_done(
         self,
@@ -59,22 +61,20 @@ class TextualReporter(ProgressReporter):
         score: VideoScore | None,
         error: str | None,
     ) -> None:
-        self._app.call_from_thread(self._app.report_video_done, video, score, error)
+        self._screen.app.call_from_thread(
+            self._screen.report_video_done, video, score, error
+        )
 
     def finish(self, result: PipelineResult) -> None:
-        self._app.call_from_thread(self._app.report_finish, result)
+        self._screen.app.call_from_thread(self._screen.report_finish, result)
 
 
-class BenchmarkApp(App[None]):
-    """Interactive dashboard that runs the benchmark pipeline live."""
-
-    CSS = APP_CSS
-    TITLE = "Video Benchmark"
+class DashboardScreen(Screen[None]):
+    """Live results dashboard with summary tabs, drill-down, and a bench tab."""
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
         ("b", "run_bench", "Run perf benchmark"),
-        ("d", "toggle_dark", "Toggle theme"),
+        ("r", "reconfigure", "New run"),
     ]
 
     def __init__(
@@ -87,7 +87,6 @@ class BenchmarkApp(App[None]):
         self._settings = settings
         self._scores_by_name: dict[str, VideoScore] = {}
         self._result: PipelineResult | None = None
-        self._done = 0
 
     # --- Layout ------------------------------------------------------------
 
@@ -124,7 +123,7 @@ class BenchmarkApp(App[None]):
         table.add_columns("Video", "Operator", "Score", "Grade", "Worst issue")
         self._run_pipeline_worker()
 
-    # --- Worker ------------------------------------------------------------
+    # --- Workers -----------------------------------------------------------
 
     @work(thread=True, exclusive=True)
     def _run_pipeline_worker(self) -> None:
@@ -133,7 +132,7 @@ class BenchmarkApp(App[None]):
     @work(thread=True, group="bench")
     def _run_bench_worker(self) -> None:
         report = synthetic_benchmark()
-        self.call_from_thread(self._show_bench, report)
+        self.app.call_from_thread(self._show_bench, report)
 
     # --- Reporter callbacks (run on the main thread) -----------------------
 
@@ -146,7 +145,6 @@ class BenchmarkApp(App[None]):
         score: VideoScore | None,
         error: str | None,
     ) -> None:
-        self._done += 1
         self.query_one("#pb", ProgressBar).advance(1)
         table = self.query_one("#live-table", DataTable)
         if score is not None:
@@ -170,13 +168,12 @@ class BenchmarkApp(App[None]):
 
     def report_finish(self, result: PipelineResult) -> None:
         self._result = result
-        self.sub_title = (
-            f"{len(result.scores)} scored / {len(result.failed)} failed"
-        )
+        self.app.sub_title = f"{len(result.scores)} scored / {len(result.failed)} failed"
         self._populate_operators(result)
         self._populate_metrics(result)
         self._populate_issues(result)
         self._populate_failed(result)
+        self.app.bell()
 
     # --- Summary tab population --------------------------------------------
 
@@ -268,14 +265,16 @@ class BenchmarkApp(App[None]):
             table.add_row(metric, f"[{style}]{value:.1f}[/{style}]", f"{weight:.1f}%")
         self.query_one("#detail", Static).update(table)
 
-    # --- Perf benchmark tab -------------------------------------------------
+    # --- Actions -----------------------------------------------------------
 
     def action_run_bench(self) -> None:
         self.query_one("#bench-table", Static).update("Running synthetic benchmark…")
         self._run_bench_worker()
 
     def _show_bench(self, report: BenchmarkReport) -> None:
-        table = Table(title=f"Per-stage timing ({report.frames} synthetic frames)", expand=True)
+        table = Table(
+            title=f"Per-stage timing ({report.frames} synthetic frames)", expand=True
+        )
         table.add_column("Stage")
         table.add_column("ms/frame", justify="right")
         table.add_column("frames/sec", justify="right")
@@ -283,5 +282,47 @@ class BenchmarkApp(App[None]):
             table.add_row(s.stage, f"{s.ms_per_frame:.3f}", f"{s.fps:.1f}")
         self.query_one("#bench-table", Static).update(table)
 
-    def action_toggle_dark(self) -> None:
-        self.theme = "textual-light" if self.theme == "textual-dark" else "textual-dark"
+    def action_reconfigure(self) -> None:
+        """Return to the configuration form for a fresh run."""
+        if isinstance(self.app, BenchmarkApp):
+            self.app.start_config(self._settings)
+
+
+class BenchmarkApp(App[None]):
+    """Drives the config form, then the live dashboard for the chosen run."""
+
+    CSS = APP_CSS
+    TITLE = "Video Benchmark"
+
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("d", "toggle_theme", "Toggle theme"),
+    ]
+
+    def __init__(
+        self,
+        settings: BenchmarkSettings,
+        videos: list[VideoFile] | None = None,
+    ) -> None:
+        super().__init__()
+        self._settings = settings
+        self._preset_videos = videos
+
+    def on_mount(self) -> None:
+        self.start_config(self._settings)
+
+    def start_config(self, settings: BenchmarkSettings) -> None:
+        """Push the interactive configuration form."""
+        self.push_screen(ConfigScreen(settings), self._on_config_done)
+
+    def _on_config_done(self, config: RunConfig | None) -> None:
+        if config is None:
+            self.exit()
+            return
+        self._settings = config.settings
+        self.push_screen(DashboardScreen(config.videos, config.settings))
+
+    def action_toggle_theme(self) -> None:
+        self.theme = (
+            "textual-light" if self.theme == "textual-dark" else "textual-dark"
+        )
