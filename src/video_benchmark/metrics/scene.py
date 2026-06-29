@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -47,16 +48,22 @@ class SceneValidator:
 
     def __init__(
         self,
-        model_name: str = "ViT-B-32",
-        pretrained: str = "laion2b_s34b_b79k",
+        model_name: str = "hf-hub:timm/ViT-B-16-SigLIP2",
+        pretrained: str = "",
     ) -> None:
+        # ``hf-hub:`` references bundle their own weights, so ``pretrained`` is
+        # left empty for those; legacy OpenCLIP names (e.g. "ViT-B-32") still
+        # take a ``pretrained`` tag like "laion2b_s34b_b79k".
         self.model_name = model_name
-        self.pretrained = pretrained
-        self._model = None
-        self._tokenizer = None
-        self._preprocess = None
-        self._text_features = None
-        self._device = None
+        self.pretrained = pretrained or None
+        self._model: Any | None = None
+        self._tokenizer: Any | None = None
+        self._preprocess: Any | None = None
+        self._text_features: Any | None = None
+        self._device: Any | None = None
+        # SigLIP scores labels independently with a sigmoid (logit_bias present);
+        # classic CLIP uses a softmax over labels. Detected at load time.
+        self._use_sigmoid = False
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
@@ -74,6 +81,8 @@ class SceneValidator:
             self._model = model.to(self._device).eval()
             self._preprocess = preprocess
             self._tokenizer = open_clip.get_tokenizer(self.model_name)
+            # SigLIP-family models expose a learned ``logit_bias``.
+            self._use_sigmoid = getattr(model, "logit_bias", None) is not None
 
             # Pre-compute text features for all labels
             text_tokens = self._tokenizer(SCENE_LABELS).to(self._device)
@@ -83,10 +92,13 @@ class SceneValidator:
                     dim=-1, keepdim=True
                 )
 
-            logger.info(f"Loaded CLIP model: {self.model_name}")
+            logger.info(
+                f"Loaded scene model: {self.model_name} "
+                f"({'sigmoid' if self._use_sigmoid else 'softmax'})"
+            )
             return True
         except Exception:
-            logger.exception("Failed to load CLIP model")
+            logger.exception("Failed to load scene/CLIP model")
             self._model = None
             return False
 
@@ -102,6 +114,9 @@ class SceneValidator:
             import cv2
             from PIL import Image
 
+            assert self._model is not None
+            assert self._preprocess is not None
+            assert self._text_features is not None
             # BGR → RGB → PIL
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(rgb)
@@ -113,13 +128,25 @@ class SceneValidator:
                 img_features = self._model.encode_image(img_tensor)
                 img_features /= img_features.norm(dim=-1, keepdim=True)
 
-                # Cosine similarity
+                # Cosine similarity → calibrated logits
                 similarity = (img_features @ self._text_features.T).squeeze(0)
-                probs = torch.softmax(similarity * 100, dim=0)
+                if self._use_sigmoid:
+                    # SigLIP: per-label sigmoid with learned scale/bias.
+                    scale = self._model.logit_scale.exp()
+                    bias = self._model.logit_bias
+                    probs = torch.sigmoid(similarity * scale + bias)
+                else:
+                    probs = torch.softmax(similarity * 100, dim=0)
+
+                # Normalize to a distribution so downstream consumers
+                # (argmax, valid-label sum) behave identically across backbones.
+                total = probs.sum()
+                if float(total) > 0:
+                    probs = probs / total
 
             return {
                 label: float(prob)
-                for label, prob in zip(SCENE_LABELS, probs)
+                for label, prob in zip(SCENE_LABELS, probs, strict=False)
             }
         except Exception:
             logger.debug("CLIP classification failed", exc_info=True)
@@ -149,5 +176,5 @@ class SceneValidator:
         result = self.classify(frame)
         if result is None:
             return None
-        valid_prob = sum(result.get(l, 0.0) for l in VALID_LABELS)
+        valid_prob = sum(result.get(label, 0.0) for label in VALID_LABELS)
         return min(100.0, valid_prob * 100.0)

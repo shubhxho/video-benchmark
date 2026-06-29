@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
 
-from video_benchmark.acceleration import AccelerationInfo, detect_acceleration, require_ffmpeg
+from video_benchmark.acceleration import (
+    AccelerationInfo,
+    detect_acceleration,
+    require_ffmpeg,
+)
 
 
 @dataclass
@@ -94,7 +98,12 @@ def probe_video(path: Path, ffprobe_path: str | None = None) -> VideoProbe:
     )
 
 
-def _default_plan(probe: VideoProbe, codec: str, crf: int | None, scale: str | None) -> CompressionPlan:
+def _default_plan(
+    probe: VideoProbe,
+    codec: str,
+    crf: int | None,
+    scale: str | None,
+) -> CompressionPlan:
     target_codec = codec.lower()
     if target_codec in {"h265", "hevc"}:
         codec_name = "libx265"
@@ -157,7 +166,7 @@ def compress_video(
     if out_path.exists() and not overwrite:
         raise FileExistsError(f"Output already exists: {out_path}")
 
-    filters: List[str] = []
+    filters: list[str] = []
     if plan.scale:
         filters.append(f"scale={plan.scale}")
 
@@ -218,8 +227,7 @@ def find_videos(root: Path) -> Iterable[Path]:
     if root.is_file() and root.suffix.lower() == ".mp4":
         yield root
         return
-    for mp4 in sorted(root.rglob("*.mp4")):
-        yield mp4
+    yield from sorted(root.rglob("*.mp4"))
 
 
 def human_size(bytes_val: int) -> str:
@@ -229,4 +237,3 @@ def human_size(bytes_val: int) -> str:
     idx = min(int(math.log(bytes_val, 1024)), len(units) - 1)
     value = bytes_val / (1024 ** idx)
     return f"{value:.1f}{units[idx]}"
-

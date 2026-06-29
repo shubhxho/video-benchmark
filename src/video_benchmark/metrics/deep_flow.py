@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -32,9 +33,9 @@ class RAFTStabilityMetric:
     """
 
     def __init__(self) -> None:
-        self._model = None
-        self._transforms = None
-        self._device = None
+        self._model: Any | None = None
+        self._transforms: Any | None = None
+        self._device: Any | None = None
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
@@ -68,6 +69,8 @@ class RAFTStabilityMetric:
         try:
             import cv2
 
+            assert self._model is not None
+            assert self._transforms is not None
             # Convert BGR → RGB → tensor [C, H, W] uint8
             prev_rgb = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2RGB)
             curr_rgb = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2RGB)

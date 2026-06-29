@@ -55,7 +55,7 @@ It scores footage using a mix of classical vision metrics, temporal checks, audi
 
 ### Python CLI
 
-- Python 3.12+
+- Python 3.13 (the ML stack — numba via librosa/pyiqa — has no 3.14 wheels yet)
 - `ffmpeg` installed on the system path
 - optional GPU / ML dependencies depending on which scoring path you use
 
@@ -135,6 +135,28 @@ uv run benchmark score --source local --path ./videos --weights-version v2
 uv run benchmark compress ./videos --output compressed --codec h265
 ```
 
+### Interactive TUI
+
+Launch the full-screen Textual dashboard — live results as videos complete, plus
+tabs for operator rankings, metric overview, common issues, failures, and a perf
+benchmark, with per-video drill-down:
+
+```bash
+uv run benchmark tui --source local --path ./videos
+```
+
+### Performance benchmark
+
+Measure per-stage throughput. The default synthetic mode needs no ffmpeg or
+sample videos and directly reflects the underlying CV/ML library performance:
+
+```bash
+uv run benchmark bench                      # synthetic (ms/frame + frames/sec per stage)
+uv run benchmark bench --frames 120         # more synthetic frames
+uv run benchmark bench --path ./videos      # real pipeline (videos/sec, per-stage share)
+uv run benchmark bench --json bench.json    # also dump results for comparison
+```
+
 ## Outputs
 
 The CLI writes artifacts into the output directory, typically `results/`.
@@ -146,11 +168,11 @@ Common files:
 - `detailed_results.json`
 - `report.html`
 
-The repo already includes sample artifacts in [results/](/Users/shubh/Documents/video-benchmark/results).
+The repo already includes sample artifacts in [results/](./results).
 
 ## How The Web App Works
 
-The browser app lives in [web/](/Users/shubh/Documents/video-benchmark/web).
+The browser app lives in [web/](./web).
 
 High-level flow:
 
@@ -163,18 +185,18 @@ High-level flow:
 
 Relevant files:
 
-- [App.tsx](/Users/shubh/Documents/video-benchmark/web/src/App.tsx)
-- [frame-extractor.ts](/Users/shubh/Documents/video-benchmark/web/src/video/frame-extractor.ts)
-- [frame-previews.ts](/Users/shubh/Documents/video-benchmark/web/src/video/frame-previews.ts)
-- [metrics-panel.tsx](/Users/shubh/Documents/video-benchmark/web/src/components/metrics-panel.tsx)
-- [brightness.ts](/Users/shubh/Documents/video-benchmark/web/src/gpu/brightness.ts)
-- [sharpness.ts](/Users/shubh/Documents/video-benchmark/web/src/gpu/sharpness.ts)
-- [blur.ts](/Users/shubh/Documents/video-benchmark/web/src/gpu/blur.ts)
-- [optical-flow.ts](/Users/shubh/Documents/video-benchmark/web/src/gpu/optical-flow.ts)
+- [App.tsx](./web/src/App.tsx)
+- [frame-extractor.ts](./web/src/video/frame-extractor.ts)
+- [frame-previews.ts](./web/src/video/frame-previews.ts)
+- [metrics-panel.tsx](./web/src/components/metrics-panel.tsx)
+- [brightness.ts](./web/src/gpu/brightness.ts)
+- [sharpness.ts](./web/src/gpu/sharpness.ts)
+- [blur.ts](./web/src/gpu/blur.ts)
+- [optical-flow.ts](./web/src/gpu/optical-flow.ts)
 
 ## How The Python Pipeline Works
 
-The Python package lives in [src/video_benchmark/](/Users/shubh/Documents/video-benchmark/src/video_benchmark).
+The Python package lives in [src/video_benchmark/](./src/video_benchmark).
 
 High-level flow:
 
@@ -187,9 +209,9 @@ High-level flow:
 
 Relevant files:
 
-- [cli.py](/Users/shubh/Documents/video-benchmark/src/video_benchmark/cli.py)
-- [orchestrator.py](/Users/shubh/Documents/video-benchmark/src/video_benchmark/pipeline/orchestrator.py)
-- [config.py](/Users/shubh/Documents/video-benchmark/src/video_benchmark/config.py)
+- [cli.py](./src/video_benchmark/cli.py)
+- [orchestrator.py](./src/video_benchmark/pipeline/orchestrator.py)
+- [config.py](./src/video_benchmark/config.py)
 
 ## Notes
 

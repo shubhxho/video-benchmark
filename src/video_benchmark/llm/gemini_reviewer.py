@@ -4,34 +4,37 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Default Gemini model. Override via VB_GEMINI_MODEL or by editing this constant.
+GEMINI_MODEL = "gemini-2.5-flash"
+
+_INSTALL_HINT = (
+    "google-genai not installed. Install with: uv add --group llm google-genai"
+)
+
 
 def review_with_gemini(
-    scores: list[dict],
-    rankings: list[dict],
+    scores: list[dict[str, Any]],
+    rankings: list[dict[str, Any]],
     api_key: str | None = None,
 ) -> str | None:
     """Send scoring results to Gemini for qualitative review.
 
-    Requires google-generativeai package (install with: uv add --group llm google-generativeai).
+    Requires the google-genai package (install with: uv add --group llm google-genai).
+    Returns None when the package or API key is unavailable, or on any API error.
     """
     try:
-        import google.generativeai as genai
+        from google import genai
     except ImportError:
-        logger.warning(
-            "google-generativeai not installed. "
-            "Install with: uv add --group llm google-generativeai"
-        )
+        logger.warning(_INSTALL_HINT)
         return None
 
     if not api_key:
         logger.warning("No Gemini API key provided. Skipping LLM review.")
         return None
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
 
     prompt = f"""Analyze these video quality benchmark results for operator headband cameras.
 
@@ -48,8 +51,10 @@ Keep the response concise (under 200 words).
 """
 
     try:
-        response = model.generate_content(prompt)
-        return response.text
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        text = response.text
+        return text if isinstance(text, str) else None
     except Exception:
         logger.exception("Gemini review failed")
         return None

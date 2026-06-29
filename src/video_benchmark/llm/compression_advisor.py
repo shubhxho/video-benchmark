@@ -11,6 +11,13 @@ from video_benchmark.compression import CompressionPlan, VideoProbe
 
 logger = logging.getLogger(__name__)
 
+# Default Gemini model. Override by editing this constant.
+GEMINI_MODEL = "gemini-2.5-flash"
+
+_INSTALL_HINT = (
+    "google-genai not installed. Install with: uv add --group llm google-genai"
+)
+
 
 def advise_compression(
     probe: VideoProbe,
@@ -26,16 +33,10 @@ def advise_compression(
         return None
 
     try:
-        import google.generativeai as genai
+        from google import genai
     except ImportError:
-        logger.warning(
-            "google-generativeai not installed. "
-            "Install with: uv add --group llm google-generativeai"
-        )
+        logger.warning(_INSTALL_HINT)
         return None
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
 
     prompt = f"""
 You are optimizing ffmpeg compression for wearable operator camera footage.
@@ -53,7 +54,8 @@ Goals:
 - Do not include any other text.
 """
     try:
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         text = response.text.strip() if response and response.text else ""
         data: dict[str, Any] = json.loads(text)
         return CompressionPlan(

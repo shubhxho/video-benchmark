@@ -53,6 +53,17 @@
     <div class="stat-card"><div class="value">{{ "%.1f"|format(elapsed) }}s</div><div class="label">Time</div></div>
   </div>
 
+  {% if run_info %}
+  <h2>Run Context</h2>
+  <table>
+    <tbody>
+    {% for k, v in run_info.items() %}
+    <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
   <h2>Grade Distribution</h2>
   {% for grade in ["A","B","C","D","F"] %}
   {% set count = grade_dist.get(grade, 0) %}
@@ -95,13 +106,34 @@
     <summary class="grade-{{ s.grade }}">{{ s.filename }} &mdash; {{ s.composite_score }} ({{ s.grade }}) {% if s.worst_issue != "none" %}&mdash; {{ s.worst_issue }}{% endif %}</summary>
     <div class="content">
       <table>
-        <thead><tr><th>Metric</th><th>Score</th></tr></thead>
+        <thead><tr><th>Metric</th><th>Score</th><th>Weight</th><th>Points</th></tr></thead>
         <tbody>
         {% for k, v in s.metric_scores.items() %}
-        <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+        <tr>
+          <td>{{ k }}</td>
+          <td>{{ v }}</td>
+          <td>{{ "%.1f"|format((s.metric_weights.get(k, 0) * 100)) }}%</td>
+          <td>{{ s.score_contributions.get(k, 0) }}</td>
+        </tr>
         {% endfor %}
         </tbody>
       </table>
+      {% if s.recommendations %}
+      <h3 style="font-size:1rem;margin:0.75rem 0 0.25rem">Recommended Fixes</h3>
+      <ul class="issue-list">
+        {% for rec in s.recommendations %}
+        <li>{{ rec }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if s.scoring_notes %}
+      <h3 style="font-size:1rem;margin:0.75rem 0 0.25rem">Scoring Notes</h3>
+      <ul class="issue-list">
+        {% for note in s.scoring_notes %}
+        <li>{{ note }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       {% if s.filename in frame_cache %}
       <div class="thumb-grid" style="margin-top:0.5rem">
         {% if frame_cache[s.filename].get("best") %}

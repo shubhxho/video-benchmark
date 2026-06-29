@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from video_benchmark.pipeline.orchestrator import FailedVideo, RunInfoValue
+from video_benchmark.scoring.aggregator import OperatorRanking
 from video_benchmark.scoring.scorer import VideoScore
 
 
 def export_detailed_json(
     scores: list[VideoScore],
-    rankings: list[dict],
-    failed: list[tuple],
+    rankings: list[OperatorRanking],
+    failed: list[FailedVideo],
     output_dir: Path,
+    run_info: dict[str, RunInfoValue] | None = None,
 ) -> Path:
     """Export detailed per-video results and rankings to JSON."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -25,6 +28,7 @@ def export_detailed_json(
             "failed_videos": len(failed),
             "operators": len(rankings),
         },
+        "run_info": run_info or {},
         "operator_rankings": rankings,
         "video_scores": [
             {
@@ -33,7 +37,11 @@ def export_detailed_json(
                 "composite_score": s.composite_score,
                 "grade": s.grade,
                 "worst_issue": s.worst_issue,
+                "recommendations": s.recommendations,
+                "scoring_notes": s.scoring_notes,
                 "metric_scores": s.metric_scores,
+                "metric_weights": s.metric_weights,
+                "score_contributions": s.score_contributions,
                 "raw_metrics": s.raw_metrics,
                 "segment_scores": s.segment_scores,
             }

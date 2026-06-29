@@ -10,41 +10,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
-
-DEFAULT_WEIGHTS = {
-    "brightness": 0.20,
-    "sharpness": 0.20,
-    "stability": 0.25,
-    "hand_detection_rate": 0.25,
-    "hand_landmark_quality": 0.10,
-    "tracking_continuity": 0.10,
-}
-
-DEFAULT_WEIGHTS_V2 = {
-    "image_quality": 0.20,
-    "stability": 0.15,
-    "hand_detection_rate": 0.20,
-    "hand_landmark_quality": 0.05,
-    "tracking_continuity": 0.05,
-    "scene_validity": 0.10,
-    "anomaly_score": 0.10,
-    "blur_score": 0.05,
-    "temporal_consistency": 0.05,
-    "audio_quality": 0.05,
-}
-
-DEFAULT_SEGMENTS = [
-    (2 * 60, 4 * 60),    # minutes 2-4
-    (28 * 60, 30 * 60),   # minutes 28-30
-    (30 * 60, 32 * 60),   # minutes 55-57 — fallback for shorter videos
-    (55 * 60, 57 * 60),   # minutes 55-57
-]
-
-# Use first 3 segments by default; the 4th is a fallback
+# Default time windows (seconds) sampled from each video. The canonical source of
+# truth for scoring weights is the ScoringWeights / ScoringWeightsV2 models below.
 DEFAULT_SEGMENT_SPECS = [
-    (2 * 60, 4 * 60),
-    (28 * 60, 30 * 60),
-    (55 * 60, 57 * 60),
+    (2 * 60, 4 * 60),     # minutes 2-4
+    (28 * 60, 30 * 60),   # minutes 28-30
+    (55 * 60, 57 * 60),   # minutes 55-57
 ]
 
 
@@ -56,10 +27,10 @@ class SegmentSpec(BaseModel):
 class ScoringWeights(BaseModel):
     """V1 scoring weights — classical CV metrics only."""
 
-    brightness: float = 0.20
-    sharpness: float = 0.20
-    stability: float = 0.25
-    hand_detection_rate: float = 0.25
+    brightness: float = 0.18
+    sharpness: float = 0.18
+    stability: float = 0.22
+    hand_detection_rate: float = 0.22
     hand_landmark_quality: float = 0.10
     tracking_continuity: float = 0.10
 
@@ -76,15 +47,17 @@ class ScoringWeights(BaseModel):
 class ScoringWeightsV2(BaseModel):
     """V2 scoring weights — includes ML models and new metrics."""
 
-    image_quality: float = 0.20
-    stability: float = 0.15
-    hand_detection_rate: float = 0.20
+    image_quality: float = 0.15
+    video_quality: float = 0.15
+    stability: float = 0.12
+    hand_detection_rate: float = 0.18
     hand_landmark_quality: float = 0.05
     tracking_continuity: float = 0.05
-    scene_validity: float = 0.10
-    anomaly_score: float = 0.10
-    blur_score: float = 0.05
-    temporal_consistency: float = 0.05
+    scene_validity: float = 0.08
+    anomaly_score: float = 0.07
+    blur_score: float = 0.03
+    temporal_consistency: float = 0.03
+    depth_structure: float = 0.04
     audio_quality: float = 0.05
 
     @classmethod
@@ -115,6 +88,23 @@ class BenchmarkSettings(BaseSettings):
     weights_v2: ScoringWeightsV2 = Field(default_factory=ScoringWeightsV2)
     report: bool = False
 
+    # --- Cutting-edge model selection (v2 only) ---
+    # No-reference IQA model from pyiqa. Strong options: "arniqa", "clipiqa+",
+    # "qualiclip+", "qalign" (SOTA but heavy/LLM-based), "topiq_nr" (fast default).
+    iqa_model: str = "topiq_nr"
+    # open_clip scene-validation backbone. Default is SigLIP 2 (Google, 2025) for
+    # much stronger zero-shot than the legacy "ViT-B-32"/"laion2b_s34b_b79k".
+    scene_model: str = "hf-hub:timm/ViT-B-16-SigLIP2"
+    scene_pretrained: str = ""
+    # Depth Anything V2 checkpoint (HF transformers depth-estimation).
+    depth_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
+    # Disable specific heavy models without uninstalling them.
+    no_vqa: bool = False
+    no_depth: bool = False
+    # Collect per-stage wall-clock timings during processing (used by `bench`).
+    # Off by default so normal runs pay no instrumentation overhead.
+    collect_timings: bool = False
+
     model_config = {"env_prefix": "VB_"}
 
     def segment_specs(self) -> list[SegmentSpec]:
@@ -140,4 +130,7 @@ def detect_available_models() -> dict[str, bool]:
         "torchvision_raft": _try_import("torchvision.models.optical_flow"),
         "librosa": _try_import("librosa"),
         "torch": _try_import("torch"),
+        # Cutting-edge additions
+        "dover": _try_import("dover"),
+        "depth_anything": _try_import("transformers"),
     }

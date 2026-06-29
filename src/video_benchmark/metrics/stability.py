@@ -21,11 +21,12 @@ class StabilityMetric(Metric):
         """
         prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
         curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
+        initial_flow = np.zeros((*prev_gray.shape, 2), dtype=np.float32)
 
         flow = cv2.calcOpticalFlowFarneback(
             prev_gray,
             curr_gray,
-            None,
+            initial_flow,
             pyr_scale=0.5,
             levels=3,
             winsize=15,

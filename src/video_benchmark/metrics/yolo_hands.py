@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _ULTRALYTICS_AVAILABLE = False
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO  # type: ignore[attr-defined]
 
     _ULTRALYTICS_AVAILABLE = True
 except ImportError:
@@ -39,7 +40,7 @@ class YOLOHandMetric:
 
     def __init__(self, model_name: str = "yolo11n-pose.pt") -> None:
         self.model_name = model_name
-        self._model = None
+        self._model: Any | None = None
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
@@ -64,6 +65,7 @@ class YOLOHandMetric:
             return None
 
         try:
+            assert self._model is not None
             results = self._model(frame, verbose=False)
             if not results or len(results) == 0:
                 return HandDetectionResult(

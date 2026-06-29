@@ -11,6 +11,8 @@ import cv2
 import numpy as np
 from jinja2 import Environment, PackageLoader, select_autoescape
 
+from video_benchmark.pipeline.orchestrator import FailedVideo, FrameCache, RunInfoValue
+from video_benchmark.scoring.aggregator import OperatorRanking
 from video_benchmark.scoring.scorer import VideoScore
 
 
@@ -57,10 +59,11 @@ def _make_grade_chart_b64(scores: list[VideoScore]) -> str | None:
 
 def export_html_report(
     scores: list[VideoScore],
-    rankings: list[dict],
-    failed: list[tuple],
+    rankings: list[OperatorRanking],
+    failed: list[FailedVideo],
     output_dir: Path,
-    frame_cache: dict[str, dict[str, np.ndarray]] | None = None,
+    frame_cache: FrameCache | None = None,
+    run_info: dict[str, RunInfoValue] | None = None,
     elapsed: float = 0.0,
 ) -> Path:
     """Generate a self-contained HTML report.
@@ -118,6 +121,7 @@ def export_html_report(
         elapsed=elapsed,
         grade_dist=grade_dist,
         grade_chart_b64=grade_chart,
+        run_info=run_info or {},
         rankings=rankings,
         scores=sorted_scores,
         frame_cache=b64_cache,

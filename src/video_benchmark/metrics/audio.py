@@ -116,7 +116,7 @@ class AudioQualityMetric:
         """Compute integrated loudness in LUFS."""
         try:
             meter = pyloudnorm.Meter(sr)
-            loudness = meter.integrated_loudness(audio)
+            loudness = float(meter.integrated_loudness(audio))
             # Clamp extreme values
             return max(-70.0, min(0.0, loudness))
         except Exception:

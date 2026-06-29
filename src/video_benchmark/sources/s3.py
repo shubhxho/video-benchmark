@@ -19,7 +19,7 @@ class S3VideoSource(VideoSource):
     def list_videos(self) -> list[VideoFile]:
         videos: list[VideoFile] = []
         paginator = self.s3.get_paginator("list_objects_v2")
-        page_kwargs: dict = {"Bucket": self.bucket}
+        page_kwargs: dict[str, str] = {"Bucket": self.bucket}
         if self.prefix:
             page_kwargs["Prefix"] = self.prefix
 

@@ -61,12 +61,12 @@ class BlurClassifier:
         # --- Encoding blur: blockiness from DCT ---
         encoding_score = self._detect_encoding_blur(gray)
 
-        scores = {
+        scores: dict[str, float] = {
             "motion": motion_score,
             "defocus": defocus_score,
             "encoding": encoding_score,
         }
-        return max(scores, key=scores.get)  # type: ignore[arg-type]
+        return max(scores, key=lambda key: scores[key])
 
     def _detect_motion_blur(
         self, magnitude: np.ndarray, cy: int, cx: int
@@ -100,7 +100,7 @@ class BlurClassifier:
         )
         max_entropy = np.log2(n_bins)
         # Low entropy → high motion score
-        return max(0.0, (1.0 - entropy / max_entropy) * 100.0)
+        return float(max(0.0, (1.0 - entropy / max_entropy) * 100.0))
 
     def _detect_defocus_blur(
         self, magnitude: np.ndarray, cy: int, cx: int

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -30,8 +31,8 @@ class LearnedIQAMetric:
 
     def __init__(self, model_name: str = "topiq_nr") -> None:
         self.model_name = model_name
-        self._model = None
-        self._device = None
+        self._model: Any | None = None
+        self._device: Any | None = None
 
     def _ensure_model(self) -> bool:
         """Lazily initialize the pyiqa model on first use."""
@@ -64,6 +65,7 @@ class LearnedIQAMetric:
         try:
             import cv2
 
+            assert self._model is not None
             # BGR → RGB → float32 tensor [0, 1] → [1, C, H, W]
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             tensor = (
@@ -89,11 +91,14 @@ class LearnedIQAMetric:
         # topiq_nr: range ~0.0-1.0
         # musiq: range ~0-100
         # brisque: range 0-100, lower is better
-        if self._model is not None and hasattr(self._model, "lower_better"):
-            if self._model.lower_better:
-                # Lower raw = better quality (e.g., BRISQUE, NIQE)
-                # Typical BRISQUE range: 0 (best) - 100 (worst)
-                return max(0.0, min(100.0, 100.0 - raw_score))
+        if (
+            self._model is not None
+            and hasattr(self._model, "lower_better")
+            and self._model.lower_better
+        ):
+            # Lower raw = better quality (e.g., BRISQUE, NIQE)
+            # Typical BRISQUE range: 0 (best) - 100 (worst)
+            return max(0.0, min(100.0, 100.0 - raw_score))
 
         # Higher raw = better quality (e.g., TOPIQ, MUSIQ, CLIPIQA)
         if self.model_name in ("topiq_nr", "clipiqa", "clipiqa+"):
