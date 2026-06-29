@@ -161,6 +161,27 @@ uv run benchmark bench --path ./videos      # real pipeline (videos/sec, per-sta
 uv run benchmark bench --json bench.json    # also dump results for comparison
 ```
 
+### Distill a compact <30 MB model
+
+The v2 scorer runs a stack of large per-frame networks (learned IQA, a CLIP scene
+model, DOVER, depth). The `distill` subpackage trains a single compact student —
+a MobileCLIP-S0 backbone (~11 M params) with multi-task heads — to reproduce the
+expensive per-frame quality signals in **one forward pass**, then benchmarks it
+head-to-head against the teacher stack:
+
+```bash
+uv run python -m video_benchmark.distill --videos videos --epochs 300 --fps 3
+```
+
+It samples frames, labels them with the teachers (classical CV + pyiqa IQA),
+trains the student heads on cached backbone features, and reports distillation
+fidelity (PLCC/SRCC vs. teacher), the size (fp16/int8), and the latency/throughput
+speedup. The exported model lands in `models/compact_quality.pt` (~22 MB fp16,
+~11 MB int8 — under the 30 MB target). Exact, cheap signals (brightness, anomaly,
+stability) deliberately stay as OpenCV at inference; the student replaces the
+*deep* signals where a learned model actually pays for itself. Point `--videos`
+at a larger operator-video corpus for production-grade fidelity.
+
 ## Outputs
 
 The CLI writes artifacts into the output directory, typically `results/`.

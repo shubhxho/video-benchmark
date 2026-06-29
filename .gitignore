@@ -11,3 +11,10 @@ wheels/
 
 # videos
 videos/
+
+# trained / downloaded model weights (regenerated via the distill command)
+models/
+*.pt
+*.pth
+*.onnx
+*.mlpackage
