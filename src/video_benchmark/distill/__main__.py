@@ -12,17 +12,19 @@ from pathlib import Path
 
 import torch
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+from rich.text import Text
 
+from video_benchmark.distill import ui
 from video_benchmark.distill.data import build_feature_cache, split_by_clip
 from video_benchmark.distill.evaluate import (
+    BenchResult,
+    Fidelity,
     benchmark_speed,
     evaluate_fidelity,
     model_size_mb,
 )
 from video_benchmark.distill.model import DEFAULT_BACKBONE, CompactQualityNet
-from video_benchmark.distill.teacher import TARGETS, TeacherLabeler
+from video_benchmark.distill.teacher import DEEP, TARGETS, TeacherLabeler
 from video_benchmark.distill.train import train_heads
 
 console = Console()
@@ -43,6 +45,10 @@ def _find_videos(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.suffix.lower() in exts)
 
 
+def _step(msg: str) -> None:
+    console.print(Text("  ▸ ", style=ui.PINK) + Text(msg, style=ui.MUTED))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Distil the metric stack into a compact model.")
     ap.add_argument("--videos", type=Path, default=Path("videos"))
@@ -54,82 +60,44 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("models/compact_quality.pt"))
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
     device = _device(args.device)
     videos = _find_videos(args.videos)
     if not videos:
-        console.print(f"[red]No videos found under {args.videos}[/red]")
+        console.print(Text("✗ no videos found under ", style=ui.RED) + Text(str(args.videos)))
         raise SystemExit(1)
 
+    console.print()
     console.print(
-        Panel(
-            f"backbone=[b]{args.backbone}[/b]\ndevice=[b]{device}[/b]  "
-            f"clips=[b]{len(videos)}[/b]  fps={args.fps}  epochs={args.epochs}\n"
-            f"targets: {', '.join(TARGETS)}",
-            title="[bold]Distillation run[/bold]",
-            border_style="blue",
+        ui.banner(
+            "COMPACT QUALITY MODEL · distillation",
+            f"{args.backbone.split(':')[-1]}   ·   {device}   ·   "
+            f"{len(videos)} clips   ·   {args.fps} fps   ·   {args.epochs} epochs\n"
+            f"targets   {' '.join(TARGETS)}",
         )
     )
 
-    # Frozen backbone + trained heads (linear-probe distillation). This is the
-    # robust choice for small corpora; for a large operator-video dataset, the
-    # next step is to unfreeze the backbone for higher fidelity.
     model = CompactQualityNet(
         backbone_name=args.backbone, pretrained=True, freeze_backbone=True
     ).to(device)
     teacher = TeacherLabeler(device=device)
 
-    console.print("Building feature cache (sampling frames, running teacher)…")
+    _step("sampling frames + running teachers (classical CV · pyiqa IQA · MobileCLIP scene)")
     cache = build_feature_cache(videos, model, teacher, device, fps_sample=args.fps)
     train_idx, val_idx = split_by_clip(cache)
-    console.print(
-        f"frames: [b]{len(cache)}[/b]  train=[b]{int(train_idx.sum())}[/b]  "
-        f"val=[b]{int(val_idx.sum())}[/b]"
+    _step(
+        f"frames={len(cache)}  train={int(train_idx.sum())}  val={int(val_idx.sum())}  "
+        "(leakage-free per-clip split)"
     )
 
-    console.print("Training student heads…")
+    _step("training student heads on cached backbone features")
     hist = train_heads(model, cache, train_idx, val_idx, device, epochs=args.epochs, lr=args.lr)
 
     fid = evaluate_fidelity(model, cache, val_idx, device)
     size = model_size_mb(model)
     bench = benchmark_speed(model, teacher, str(videos[0]), device)
 
-    # --- report ---
-    ftab = Table(title="Distillation fidelity (student vs teacher, held-out frames)")
-    ftab.add_column("Target")
-    ftab.add_column("PLCC", justify="right")
-    ftab.add_column("SRCC", justify="right")
-    ftab.add_column("MAE (0-100)", justify="right")
-    for name in TARGETS:
-        ftab.add_row(
-            name,
-            f"{fid.per_target_plcc[name]:.3f}",
-            f"{fid.per_target_srcc[name]:.3f}",
-            f"{fid.per_target_mae[name]:.2f}",
-        )
-    ftab.add_row("[b]mean[/b]", f"[b]{fid.mean_plcc:.3f}[/b]", f"[b]{fid.mean_srcc:.3f}[/b]", "")
-    ftab.add_row(
-        "[b]composite[/b]",
-        f"[b]{fid.composite_plcc:.3f}[/b]",
-        f"[b]{fid.composite_srcc:.3f}[/b]",
-        "",
-    )
-    console.print(ftab)
-
-    stab = Table(title="Size & speed (the time-complexity win)")
-    stab.add_column("Metric")
-    stab.add_column("Value", justify="right")
-    stab.add_row("params", f"{size['params_millions']:.2f} M")
-    stab.add_row("size fp16 / int8", f"{size['fp16_mb']:.1f} / {size['int8_mb']:.1f} MB")
-    stab.add_row("student latency", f"{bench.student_ms_per_frame:.2f} ms/frame")
-    stab.add_row("teacher latency", f"{bench.teacher_ms_per_frame:.2f} ms/frame")
-    stab.add_row("[b]latency speedup[/b]", f"[b]{bench.speedup_latency:.1f}×[/b]")
-    stab.add_row("student throughput (batched)", f"{bench.student_fps_batched:.0f} fps")
-    stab.add_row("teacher throughput", f"{bench.teacher_fps:.0f} fps")
-    stab.add_row("[b]throughput speedup[/b]", f"[b]{bench.speedup_throughput:.1f}×[/b]")
-    console.print(stab)
-
-    # --- export (fp16 state dict) ---
+    # --- export (fp16) ---
     args.out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "backbone_name": args.backbone,
@@ -138,15 +106,113 @@ def main() -> None:
     }
     torch.save(payload, args.out)
     on_disk = args.out.stat().st_size / 1e6
-    console.print(
-        Panel(
-            f"saved [b]{args.out}[/b]  ([b]{on_disk:.1f} MB[/b] on disk, fp16)\n"
-            f"best val loss={hist['best_val_loss']:.4f}  epochs={hist['epochs_run']}\n"
-            f"under-30MB target: {'[green]PASS[/green]' if on_disk < 30 else '[red]FAIL[/red]'}",
-            title="[bold]Export[/bold]",
-            border_style="green",
+
+    _render(fid, size, bench, hist, args.out, on_disk)
+
+
+def _render(
+    fid: Fidelity,
+    size: dict[str, float],
+    bench: BenchResult,
+    hist: dict[str, float],
+    out_path: Path,
+    on_disk: float,
+) -> None:
+    # --- headline cards -----------------------------------------------------
+    console.print()
+    cards = [
+        ui.stat_card(
+            "COMPOSITE",
+            f"{fid.composite_plcc:+.2f}",
+            "verdict agreement",
+            ui._corr_color(fid.composite_plcc),
+        ),
+        ui.stat_card(
+            "DEEP SIGNALS",
+            f"{fid.deep_plcc:+.2f}",
+            "iqa + scene fidelity",
+            ui._corr_color(fid.deep_plcc),
+        ),
+        ui.stat_card(
+            "THROUGHPUT",
+            f"{bench.speedup_throughput:.1f}×",
+            f"{bench.student_fps_batched:.0f} vs {bench.teacher_fps:.0f} fps",
+            ui.GREEN,
+        ),
+        ui.stat_card(
+            "SIZE",
+            f"{size['fp16_mb']:.0f} MB",
+            f"fp16 · int8 {size['int8_mb']:.0f}MB",
+            ui.GREEN if size["fp16_mb"] < 30 else ui.RED,
+        ),
+    ]
+    console.print(ui.headline_cards(cards))
+
+    # --- fidelity table -----------------------------------------------------
+    console.print()
+    console.print(ui.rule("FIDELITY · student reproduces the teacher"))
+    tbl = ui.clean_table()
+    tbl.add_column("signal", no_wrap=True)
+    tbl.add_column("kind", justify="center", width=6)
+    tbl.add_column("spread", justify="right", width=8)
+    tbl.add_column("agreement (PLCC)", width=26)
+    tbl.add_column("MAE", justify="right", width=7)
+    for name in TARGETS:
+        is_deep = name in DEEP
+        sig = Text(("◆ " if is_deep else "  ") + name, style=ui.VIOLET if is_deep else ui.MUTED)
+        kind = ui.badge("deep", ui.VIOLET) if is_deep else Text("cv", style=ui.FAINT)
+        std = fid.per_target_std[name]
+        spread = Text(f"{std:.0f}" + ("·flat" if std < 5 else ""), style=ui.FAINT)
+        mae = fid.per_target_mae[name]
+        mae_color = ui.GREEN if mae < 10 else ui.AMBER if mae < 20 else ui.RED
+        tbl.add_row(
+            sig,
+            kind,
+            spread,
+            ui.gauge(fid.per_target_plcc[name]),
+            Text(f"{mae:.1f}", style=mae_color),
         )
+    console.print(ui.panelize("per-signal  (deep = distilled · cv = exact, kept in OpenCV)", tbl))
+
+    # --- speed --------------------------------------------------------------
+    console.print()
+    console.print(ui.rule("SPEED · the time-complexity win"))
+    maxfps = max(bench.student_fps_batched, bench.teacher_fps, 1.0)
+
+    def fps_row(label: str, fps: float, color: str) -> Text:
+        n = round(fps / maxfps * 22)
+        line = Text(f"{label:<9}", style=ui.MUTED)
+        line.append(ui.FILLED * n, style=color)
+        line.append(ui.EMPTY * (22 - n), style=ui.FAINT)
+        line.append(f"  {fps:.0f} fps", style=color)
+        return line
+
+    speed = Text()
+    speed.append_text(fps_row("student", bench.student_fps_batched, ui.GREEN))
+    speed.append("\n")
+    speed.append_text(fps_row("teacher", bench.teacher_fps, ui.AMBER))
+    speed.append("\n\n")
+    speed.append("one forward pass replaces pyiqa + MobileCLIP scene + CV  →  ", style=ui.MUTED)
+    speed.append(f"▲ {bench.speedup_throughput:.1f}× faster", style=f"bold {ui.GREEN}")
+    speed.append(
+        f"   ({bench.student_ms_per_frame:.1f} vs {bench.teacher_ms_per_frame:.1f} ms/frame)",
+        style=ui.FAINT,
     )
+    console.print(ui.panelize("throughput  ·  student vs teacher stack", speed, accent=ui.GREEN))
+
+    # --- export footer ------------------------------------------------------
+    console.print()
+    ok = on_disk < 30
+    foot = Text()
+    foot.append("✓ saved  " if ok else "✗ saved  ", style=ui.GREEN if ok else ui.RED)
+    foot.append(str(out_path), style="bold")
+    foot.append(f"   {on_disk:.1f} MB fp16", style=ui.MUTED)
+    foot.append("\n")
+    foot.append("under-30MB target  ", style=ui.MUTED)
+    foot.append("PASS" if ok else "FAIL", style=f"bold {ui.GREEN if ok else ui.RED}")
+    foot.append(f"     best val loss {hist['best_val_loss']:.4f}", style=ui.FAINT)
+    console.print(ui.panelize("export", foot, accent=ui.PINK))
+    console.print()
 
 
 if __name__ == "__main__":

@@ -18,12 +18,16 @@ from video_benchmark.distill.data import (
     sample_frames,
 )
 from video_benchmark.distill.model import CompactQualityNet
-from video_benchmark.distill.teacher import TARGETS, TeacherLabeler
+from video_benchmark.distill.teacher import DEEP, TARGETS, TeacherLabeler
+
+# Below this teacher-target spread (std, 0..100 scale) a correlation is just noise
+# on a near-flat signal and is reported as n/a rather than a misleading number.
+MIN_INFORMATIVE_STD = 5.0
 
 
 def _corr(a: np.ndarray, b: np.ndarray, kind: str = "plcc") -> float:
-    """Pearson/Spearman correlation, NaN when a column is constant."""
-    if a.std() <= 1e-6 or b.std() <= 1e-6:
+    """Pearson/Spearman correlation, NaN when either column is ~constant."""
+    if a.std() < MIN_INFORMATIVE_STD or b.std() <= 1e-6:
         return float("nan")
     fn = pearsonr if kind == "plcc" else spearmanr
     return float(fn(a, b)[0])
@@ -34,16 +38,26 @@ class Fidelity:
     per_target_plcc: dict[str, float]
     per_target_srcc: dict[str, float]
     per_target_mae: dict[str, float]  # 0..100 units
+    per_target_std: dict[str, float]  # teacher signal spread on the val set
     composite_plcc: float = float("nan")  # agreement on the overall quality verdict
     composite_srcc: float = float("nan")
 
+    def _mean(self, d: dict[str, float], names: list[str] | None = None) -> float:
+        vals = [d[k] for k in (names or list(d))]
+        return float(np.nanmean(vals)) if vals else float("nan")
+
     @property
     def mean_plcc(self) -> float:
-        return float(np.nanmean(list(self.per_target_plcc.values())))
+        return self._mean(self.per_target_plcc)
 
     @property
     def mean_srcc(self) -> float:
-        return float(np.nanmean(list(self.per_target_srcc.values())))
+        return self._mean(self.per_target_srcc)
+
+    @property
+    def deep_plcc(self) -> float:
+        """Mean PLCC over the signals the student is actually meant to learn."""
+        return self._mean(self.per_target_plcc, DEEP)
 
 
 @dataclass
@@ -76,19 +90,25 @@ def evaluate_fidelity(
     with torch.no_grad():
         y_pred = model.forward_from_features(feats).cpu().numpy()
 
-    plcc, srcc, mae = {}, {}, {}
+    plcc, srcc, mae, std = {}, {}, {}, {}
     for i, name in enumerate(TARGETS):
         t, p = y_true[:, i], y_pred[:, i]
         plcc[name] = _corr(t, p, "plcc")
         srcc[name] = _corr(t, p, "srcc")
         mae[name] = float(np.mean(np.abs(t - p)))
+        std[name] = float(t.std())
 
     # Composite = mean over targets that genuinely vary; the bottom-line "do the
     # student and teacher agree on overall frame quality" number.
     varying = [i for i in range(len(TARGETS)) if y_true[:, i].std() > 1e-6]
     ct, cp = y_true[:, varying].mean(axis=1), y_pred[:, varying].mean(axis=1)
     return Fidelity(
-        plcc, srcc, mae, composite_plcc=_corr(ct, cp, "plcc"), composite_srcc=_corr(ct, cp, "srcc")
+        plcc,
+        srcc,
+        mae,
+        std,
+        composite_plcc=_corr(ct, cp, "plcc"),
+        composite_srcc=_corr(ct, cp, "srcc"),
     )
 
 
@@ -118,10 +138,10 @@ def benchmark_speed(
         elif device == "cuda":
             torch.cuda.synchronize()
 
-    # --- student: single-frame latency ---
+    # --- student: one forward replaces the whole stack ---
     x1 = x[:1]
     with torch.no_grad():
-        for _ in range(5):
+        for _ in range(8):  # generous warmup — MPS dispatch is noisy
             model(x1)
         sync()
         t = time.perf_counter()
@@ -130,7 +150,6 @@ def benchmark_speed(
         sync()
         student_ms = (time.perf_counter() - t) / iters * 1000.0
 
-        # --- student: batched throughput ---
         for _ in range(3):
             model(x)
         sync()
@@ -140,16 +159,28 @@ def benchmark_speed(
         sync()
         student_fps = batch_size * iters / (time.perf_counter() - t)
 
-    # --- teacher: per-frame = pyiqa (deep) + classical CV ---
-    iqa_in = _pyiqa_tensor(frames[:1])
-    teacher.iqa_batch(iqa_in)  # warmup/load
-    t = time.perf_counter()
-    reps = max(5, iters // 4)
-    for _ in range(reps):
+    # --- teacher: the SAME signals the student produces, i.e. every deep model it
+    #     replaces (pyiqa IQA + the MobileCLIP scene model) plus classical CV.
+    iqa_in = _pyiqa_tensor(frames)
+    teacher.iqa_batch(iqa_in[:1])  # warmup/load
+    if teacher._use_scene:
+        teacher._ensure_scene().score(frames[:1])
+
+    def teacher_batch() -> None:
         teacher.iqa_batch(iqa_in)
-        teacher.classical(frames[0])
-    teacher_ms = (time.perf_counter() - t) / reps * 1000.0
-    teacher_fps = 1000.0 / teacher_ms
+        if teacher._use_scene:
+            teacher._ensure_scene().score(frames)
+        for f in frames:
+            teacher.classical(f)
+
+    reps = max(4, iters // 8)
+    teacher_batch()  # warmup
+    t = time.perf_counter()
+    for _ in range(reps):
+        teacher_batch()
+    teacher_total = time.perf_counter() - t
+    teacher_fps = batch_size * reps / teacher_total
+    teacher_ms = teacher_total / (reps * batch_size) * 1000.0
 
     return BenchResult(
         student_ms_per_frame=student_ms,
