@@ -52,8 +52,11 @@ Requires system `ffmpeg` on PATH for any path that decodes real video.
   aggregation.
 - `output/` — Rich console summary, CSV/JSON exporters, HTML report.
 - `benchmark/runner.py` — synthetic + real performance benchmarks.
-- `tui/` — Textual dashboard (`BenchmarkApp`) that runs the pipeline in a worker
-  thread and shows live results, summary tabs, drill-down, and a benchmark tab.
+- `tui/` — Textual app (`BenchmarkApp`). Opens a huh-style interactive
+  configuration form (`config_screen.py`, `resolve.py`) that validates input and
+  resolves the video list, then pushes `DashboardScreen`, which runs the pipeline
+  in a worker thread and shows live results, summary tabs, drill-down, and a
+  benchmark tab. `styles.py` holds the CSS.
 
 ## Notes
 

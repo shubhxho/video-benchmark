@@ -137,12 +137,16 @@ uv run benchmark compress ./videos --output compressed --codec h265
 
 ### Interactive TUI
 
-Launch the full-screen Textual dashboard — live results as videos complete, plus
-tabs for operator rankings, metric overview, common issues, failures, and a perf
-benchmark, with per-video drill-down:
+Launch the full-screen Textual app. It opens with an interactive, keyboard-driven
+configuration form (huh-style — selects, text inputs, a GPU toggle, and a
+multi-select for extras, with inline validation), then flows into a live
+dashboard: results stream in as videos complete, with tabs for operator rankings,
+metric overview, common issues, failures, and a perf benchmark, plus per-video
+drill-down. Press `r` for a new run, `b` to benchmark, `q` to quit.
 
 ```bash
-uv run benchmark tui --source local --path ./videos
+uv run benchmark tui                          # opens the form with defaults
+uv run benchmark tui --source local --path ./videos   # pre-fills the form
 ```
 
 ### Performance benchmark

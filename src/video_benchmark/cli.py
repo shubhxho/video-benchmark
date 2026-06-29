@@ -422,7 +422,13 @@ def tui(
         str, typer.Option("--weights-version", help="Scoring model: v1 or v2")
     ] = "v2",
 ) -> None:
-    """Launch the interactive Textual TUI to score videos with a live dashboard."""
+    """Launch the interactive Textual TUI.
+
+    Any flags passed here pre-fill an interactive configuration form; the form
+    is where you confirm the source, path, scoring model, and run options before
+    the live dashboard starts. Flags are optional — `benchmark tui` with no
+    arguments opens the form with sensible defaults.
+    """
     require_ffmpeg()
     if weights_version not in {"v1", "v2"}:
         console.print("[red]--weights-version must be 'v1' or 'v2'.[/red]")
@@ -444,14 +450,9 @@ def tui(
         weights_version=cast(WeightsVersion, weights_version),
     )
 
-    videos = _resolve_videos(settings)
-    if not videos:
-        console.print("[red]No videos found.[/red]")
-        raise typer.Exit(1)
-
     from video_benchmark.tui.app import BenchmarkApp
 
-    BenchmarkApp(videos, settings).run()
+    BenchmarkApp(settings).run()
 
 
 def _resolve_videos(settings: BenchmarkSettings) -> list[VideoFile]:
