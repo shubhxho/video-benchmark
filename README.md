@@ -85,6 +85,20 @@ cd web
 bun run preview
 ```
 
+### Deploy (Vercel)
+
+The web app deploys to Vercel and nothing else. The root [vercel.json](./vercel.json)
+builds `web/` with bun and serves `web/dist` as a static site. It also sets the
+`Cross-Origin-Opener-Policy: same-origin` / `Cross-Origin-Embedder-Policy: require-corp`
+headers on every response — this cross-origin isolation is what unlocks
+`SharedArrayBuffer`, and therefore the multi-threaded FFmpeg core and MediaPipe's
+threaded WASM. Without it the app still works, just on the slower single-threaded
+paths.
+
+Import the repo into Vercel (or run `vercel`) and no extra configuration is
+needed. The dev and preview servers set the same isolation headers via
+[vite.config.ts](./web/vite.config.ts).
+
 ### Python CLI
 
 Using `uv`:
@@ -181,22 +195,33 @@ The browser app lives in [web/](./web).
 High-level flow:
 
 1. load the video
-2. extract frames with FFmpeg WASM
+2. extract frames with FFmpeg WASM (multi-threaded core when the page is
+   cross-origin isolated, single-threaded otherwise)
 3. compute brightness, sharpness, blur, and optical-flow stability on WebGPU
-4. run hand detection with MediaPipe
+4. run MediaPipe segmentation and holistic body/hand detection — each in its own
+   Web Worker so they run concurrently with the WebGPU metrics on the main thread
 5. analyze audio and temporal consistency
 6. score the clip and render a compact review UI
+
+Both heavy ML models and the WebGPU metrics run in parallel per frame, so the
+per-frame cost is roughly the slowest single stage rather than their sum.
 
 Relevant files:
 
 - [App.tsx](./web/src/App.tsx)
-- [frame-extractor.ts](./web/src/video/frame-extractor.ts)
+- [frame-extractor.ts](./web/src/video/frame-extractor.ts) — single/multi-threaded ffmpeg selection
 - [frame-previews.ts](./web/src/video/frame-previews.ts)
 - [metrics-panel.tsx](./web/src/components/metrics-panel.tsx)
+- [worker-rpc.ts](./web/src/metrics/worker-rpc.ts) — shared request/response client for the ML workers
+- [body-mapping.ts](./web/src/metrics/body-mapping.ts) + [body-mapping-worker.ts](./web/src/metrics/body-mapping-worker.ts)
+- [segmentation.ts](./web/src/metrics/segmentation.ts) + [segmentation-worker.ts](./web/src/metrics/segmentation-worker.ts)
 - [brightness.ts](./web/src/gpu/brightness.ts)
 - [sharpness.ts](./web/src/gpu/sharpness.ts)
 - [blur.ts](./web/src/gpu/blur.ts)
 - [optical-flow.ts](./web/src/gpu/optical-flow.ts)
+
+When the page is cross-origin isolated the extraction step is labelled
+"extracting frames (multithreaded)" so you can confirm the fast path is active.
 
 ## How The Python Pipeline Works
 
@@ -223,7 +248,8 @@ Relevant files:
 - The web app depends on WebGPU availability for the GPU metric path.
 - The Python CLI requires system `ffmpeg`.
 - Some optional Python metrics depend on heavier ML packages such as `pyiqa`, `ultralytics`, `open-clip-torch`, and Torch optical flow support.
-- The web build includes local FFmpeg core assets, so the production bundle is intentionally larger than a typical small Vite app.
+- The web build includes local FFmpeg core assets (both single- and multi-threaded), so the production bundle is intentionally larger than a typical small Vite app. Each core is fetched lazily, so a visitor only downloads the one their browser uses.
+- The multi-threaded FFmpeg core is copied into `web/public/vendor/ffmpeg/` at build time by `scripts/copy-ffmpeg-core.mjs` (gitignored); `bun run dev`, `preview`, and `build` all run this copy step automatically.
 
 ## Development
 

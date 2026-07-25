@@ -42,6 +42,7 @@ type AnalyzeMessage = {
   width: number;
   height: number;
   pixels: ArrayBuffer;
+  timestampMs: number;
 };
 type DisposeMessage = { type: "dispose" };
 
@@ -68,6 +69,14 @@ let modelLabel = "";
 let labels: string[] = [];
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
+// VIDEO running mode requires strictly increasing timestamps per instance.
+let lastTimestamp = 0;
+
+function nextTimestamp(timestampMs: number): number {
+  const ts = Math.max(lastTimestamp + 1, Math.round(timestampMs) || 0);
+  lastTimestamp = ts;
+  return ts;
+}
 
 function isInActionZone(x: number, y: number, width: number, height: number): boolean {
   return x >= width * 0.2 && x < width * 0.8 && y >= height * 0.35 && y < height;
@@ -146,7 +155,7 @@ async function init(): Promise<ReadyResponse> {
           modelAssetPath: candidate.modelAssetPath,
           delegate: candidate.delegate,
         },
-        runningMode: "IMAGE",
+        runningMode: "VIDEO",
         displayNamesLocale: "en",
         outputCategoryMask: true,
         outputConfidenceMasks: false,
@@ -189,14 +198,14 @@ function analyze(message: AnalyzeMessage): ResultResponse {
     throw new Error("Segmentation worker is not initialized");
   }
 
-  const { id, width, height, pixels } = message;
+  const { id, width, height, pixels, timestampMs } = message;
   const framePixels = new Uint8Array(pixels);
   const localCtx = ensureCanvas(width, height);
   let result = null;
 
   try {
     localCtx.putImageData(new ImageData(new Uint8ClampedArray(framePixels), width, height), 0, 0);
-    result = segmenter.segment(canvas!);
+    result = segmenter.segmentForVideo(canvas!, nextTimestamp(timestampMs));
 
     const mask = result.categoryMask?.getAsUint8Array() ?? new Uint8Array(width * height);
     const metrics = analyzeCategoryMask(mask, width, height, result.qualityScores);

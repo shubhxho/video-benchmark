@@ -1,1 +1,4 @@
 node_modules
+dist
+# copied from node_modules at build time by scripts/copy-ffmpeg-core.mjs
+public/vendor/ffmpeg

@@ -3,8 +3,8 @@
   "private": true,
   "packageManager": "bun@1.3.11",
   "scripts": {
-    "postinstall": "cd web && bun install --frozen-lockfile",
-    "build": "cd web && bun run build && cd .. && rm -rf dist && cp -R web/dist dist",
-    "dev": "cd web && bun run dev"
+    "dev": "cd web && bun run dev",
+    "build": "cd web && bun install && bun run build",
+    "preview": "cd web && bun run preview"
   }
 }
