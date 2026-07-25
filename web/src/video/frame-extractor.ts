@@ -3,6 +3,11 @@ import { fetchFile } from "@ffmpeg/util";
 import coreURL from "@ffmpeg/core?url";
 import wasmURL from "@ffmpeg/core/wasm?url";
 import workerURL from "@ffmpeg/ffmpeg/worker?url";
+import {
+  FFMPEG_CORE_MT_URL,
+  FFMPEG_CORE_MT_WASM_URL,
+  FFMPEG_CORE_MT_WORKER_URL,
+} from "../runtime-assets.js";
 import type { FrameData, ProcessingProgress } from "../types.js";
 
 const MAX_FRAMES = 120;
@@ -10,20 +15,62 @@ const MAX_ANALYSIS_DIMENSION = 720;
 const MAX_FRAME_MEMORY_BYTES = 128 * 1024 * 1024;
 const EXTRACTION_YIELD_INTERVAL = 4;
 
+export type FFmpegCoreKind = "multithreaded" | "singlethreaded";
+
 let ffmpegPromise: Promise<FFmpeg> | null = null;
+let activeCoreKind: FFmpegCoreKind | null = null;
 let extractionJobId = 0;
+
+/** Which ffmpeg core is loaded, or null before the first extraction. */
+export function getActiveFFmpegCore(): FFmpegCoreKind | null {
+  return activeCoreKind;
+}
 
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function isCrossOriginIsolated(): boolean {
+  return typeof crossOriginIsolated !== "undefined" && crossOriginIsolated === true;
+}
+
+// A fresh FFmpeg instance per attempt: once `load()` has spawned the wrapper
+// worker, retrying `load()` on the same instance would leak a second worker, so
+// the single-threaded fallback gets its own instance.
+async function loadFFmpeg(multithreaded: boolean): Promise<FFmpeg> {
+  const ffmpeg = new FFmpeg();
+  if (multithreaded) {
+    await ffmpeg.load({
+      coreURL: FFMPEG_CORE_MT_URL,
+      wasmURL: FFMPEG_CORE_MT_WASM_URL,
+      workerURL: FFMPEG_CORE_MT_WORKER_URL,
+      classWorkerURL: workerURL,
+    });
+  } else {
+    await ffmpeg.load({ coreURL, wasmURL, classWorkerURL: workerURL });
+  }
+  activeCoreKind = multithreaded ? "multithreaded" : "singlethreaded";
+  return ffmpeg;
 }
 
 async function getFFmpeg(): Promise<FFmpeg> {
   if (ffmpegPromise) return ffmpegPromise;
 
   ffmpegPromise = (async () => {
-    const ffmpeg = new FFmpeg();
-    await ffmpeg.load({ coreURL, wasmURL, classWorkerURL: workerURL });
-    return ffmpeg;
+    // The multi-threaded core parallelises decode/scale across pthreads and is
+    // substantially faster, but it needs SharedArrayBuffer (cross-origin
+    // isolation). Fall back to the single-threaded core when unavailable.
+    if (isCrossOriginIsolated()) {
+      try {
+        return await loadFFmpeg(true);
+      } catch (error) {
+        console.warn(
+          "Multi-threaded ffmpeg core failed to load, falling back to single-threaded",
+          error,
+        );
+      }
+    }
+    return loadFFmpeg(false);
   })().catch((error) => {
     ffmpegPromise = null;
     throw error;
@@ -218,10 +265,12 @@ async function extractFramesWithFFmpeg(
   const outputName = `frames-${jobId}.rgba`;
   const ffmpeg = await getFFmpeg();
   let mountedInput: MountedInput | null = null;
+  const extractPhase =
+    activeCoreKind === "multithreaded" ? "Extracting frames (multithreaded)" : "Extracting frames";
 
   const progressHandler = ({ progress }: { progress: number }) => {
     const current = Math.max(1, Math.min(frameCount, Math.round(progress * frameCount)));
-    onProgress?.({ phase: "Extracting frames", current, total: frameCount });
+    onProgress?.({ phase: extractPhase, current, total: frameCount });
   };
 
   ffmpeg.on("progress", progressHandler);

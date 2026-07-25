@@ -1,24 +1,12 @@
 import type { FrameData, SegmentationMetrics } from "../types.js";
+import { WorkerRpc } from "./worker-rpc.js";
 
-type WorkerReadyMessage = {
-  type: "ready";
+export interface SegmentationAnalyzer {
   modelLabel: string;
   labels: string[];
-};
-
-type WorkerResultMessage = {
-  type: "result";
-  id: number;
-  metrics: SegmentationMetrics;
-};
-
-type WorkerErrorMessage = {
-  type: "error";
-  id?: number;
-  message: string;
-};
-
-type WorkerMessage = WorkerReadyMessage | WorkerResultMessage | WorkerErrorMessage;
+  analyzeFrame(frame: FrameData): Promise<SegmentationMetrics>;
+  destroy(): void;
+}
 
 function emptyMetrics(): SegmentationMetrics {
   return {
@@ -30,107 +18,45 @@ function emptyMetrics(): SegmentationMetrics {
   };
 }
 
-class WorkerSegmentationAnalyzer {
-  readonly modelLabel: string;
-  readonly labels: string[];
-
+class WorkerSegmentationAnalyzer implements SegmentationAnalyzer {
   private constructor(
-    private readonly worker: Worker,
-    modelLabel: string,
-    labels: string[],
-  ) {
-    this.modelLabel = modelLabel;
-    this.labels = labels;
-  }
+    private readonly rpc: WorkerRpc,
+    readonly modelLabel: string,
+    readonly labels: string[],
+  ) {}
 
   static async create(): Promise<WorkerSegmentationAnalyzer> {
+    // The new Worker(new URL(...)) call must stay inline so Vite bundles it.
     const worker = new Worker(new URL("./segmentation-worker.ts", import.meta.url), {
       type: "module",
     });
-
-    const ready = await new Promise<WorkerReadyMessage>((resolve, reject) => {
-      const handleMessage = (event: MessageEvent<WorkerMessage>) => {
-        const message = event.data;
-        if (message.type === "ready") {
-          cleanup();
-          resolve(message);
-        } else if (message.type === "error") {
-          cleanup();
-          reject(new Error(message.message));
-        }
-      };
-
-      const handleError = (event: ErrorEvent) => {
-        cleanup();
-        reject(event.error instanceof Error ? event.error : new Error(event.message));
-      };
-
-      const cleanup = () => {
-        worker.removeEventListener("message", handleMessage);
-        worker.removeEventListener("error", handleError);
-      };
-
-      worker.addEventListener("message", handleMessage);
-      worker.addEventListener("error", handleError);
-      worker.postMessage({ type: "init" });
-    });
-
-    return new WorkerSegmentationAnalyzer(worker, ready.modelLabel, ready.labels);
+    const { rpc, ready } = await WorkerRpc.create(worker);
+    const modelLabel = typeof ready.modelLabel === "string" ? ready.modelLabel : "segmentation";
+    const labels = Array.isArray(ready.labels) ? (ready.labels as string[]) : [];
+    return new WorkerSegmentationAnalyzer(rpc, modelLabel, labels);
   }
 
-  analyzeFrame(frame: FrameData): Promise<SegmentationMetrics> {
-    return new Promise((resolve, reject) => {
-      const id = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-      const pixels = new Uint8Array(frame.pixels);
-
-      const handleMessage = (event: MessageEvent<WorkerMessage>) => {
-        const message = event.data;
-        if (message.type === "result" && message.id === id) {
-          cleanup();
-          resolve(message.metrics);
-        } else if (message.type === "error" && message.id === id) {
-          cleanup();
-          reject(new Error(message.message));
-        }
-      };
-
-      const handleError = (event: ErrorEvent) => {
-        cleanup();
-        reject(event.error instanceof Error ? event.error : new Error(event.message));
-      };
-
-      const cleanup = () => {
-        this.worker.removeEventListener("message", handleMessage);
-        this.worker.removeEventListener("error", handleError);
-      };
-
-      this.worker.addEventListener("message", handleMessage);
-      this.worker.addEventListener("error", handleError);
-      this.worker.postMessage(
-        {
-          type: "analyze",
-          id,
-          width: frame.width,
-          height: frame.height,
-          pixels: pixels.buffer,
-        },
-        [pixels.buffer],
-      );
-    });
+  async analyzeFrame(frame: FrameData): Promise<SegmentationMetrics> {
+    const pixels = new Uint8Array(frame.pixels);
+    const response = await this.rpc.request(
+      {
+        type: "analyze",
+        width: frame.width,
+        height: frame.height,
+        pixels: pixels.buffer,
+        timestampMs: Math.round(frame.timestamp * 1000),
+      },
+      [pixels.buffer],
+    );
+    return (response.metrics as SegmentationMetrics | undefined) ?? emptyMetrics();
   }
 
   destroy(): void {
-    this.worker.postMessage({ type: "dispose" });
-    this.worker.terminate();
+    this.rpc.dispose();
   }
 }
 
-export async function createSegmentationAnalyzer(): Promise<{
-  modelLabel: string;
-  labels: string[];
-  analyzeFrame(frame: FrameData): Promise<SegmentationMetrics>;
-  destroy(): void;
-}> {
+export async function createSegmentationAnalyzer(): Promise<SegmentationAnalyzer> {
   try {
     return await WorkerSegmentationAnalyzer.create();
   } catch (error) {

@@ -173,7 +173,11 @@ export default function App() {
         }
         upd("analyze", `analyzing ${i + 1}/${frames.length}`);
         const fr = frames[i];
+        // Kick off both ML workers first so holistic body-mapping and
+        // segmentation run concurrently while the WebGPU metrics compute on the
+        // main thread. A per-frame failure degrades to null rather than aborting.
         const segmentationPromise = segmenter?.analyzeFrame(fr);
+        const mappingPromise = mapper ? mapper.detect(fr).catch(() => null) : null;
         const [b, s, bl] = await Promise.all([bm.compute(fr), sm.compute(fr), blm.compute(fr)]);
         const st = i > 0 ? await ofm.compute(fr, frames[i - 1]) : -1;
         const pixelStats = frameAnalyzer.analyzeFrame(fr);
@@ -199,8 +203,8 @@ export default function App() {
         let bodyDet = false, bodyLm = 0, bodyVis = 0, limbVis = 0;
         let limbScores = { torso: 0, leftArm: 0, rightArm: 0, leftLeg: 0, rightLeg: 0 };
         let bodyMap = null;
-        if (mapper) {
-          const mapping = mapper.detect(fr);
+        const mapping = mappingPromise ? await mappingPromise : null;
+        if (mapping) {
           hDet = mapping.handDetected;
           bothHands = mapping.bothHandsDetected;
           hConf = mapping.handConfidence;

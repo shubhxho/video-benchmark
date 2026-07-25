@@ -12,6 +12,11 @@ function assetDir(path: string): string {
   return resolved.endsWith("/") ? resolved : `${resolved}/`;
 }
 
+// Multi-threaded ffmpeg-core, copied into public/vendor/ffmpeg at build time.
+export const FFMPEG_CORE_MT_URL = assetPath("vendor/ffmpeg/ffmpeg-core.js");
+export const FFMPEG_CORE_MT_WASM_URL = assetPath("vendor/ffmpeg/ffmpeg-core.wasm");
+export const FFMPEG_CORE_MT_WORKER_URL = assetPath("vendor/ffmpeg/ffmpeg-core.worker.js");
+
 export const MEDIAPIPE_WASM_ROOT = assetDir("vendor/mediapipe/wasm");
 export const HOLISTIC_LANDMARKER_MODEL_URL = assetPath(
   "models/mediapipe/holistic_landmarker.task",
