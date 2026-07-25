@@ -14,9 +14,15 @@
       ]
     },
     {
-      "source": "/(assets|vendor|models)/(.*)",
+      "source": "/assets/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(vendor|models)/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
       ]
     }
   ]
